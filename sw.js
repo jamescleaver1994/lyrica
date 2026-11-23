@@ -1,7 +1,7 @@
 /* Offline support: keeps the app, its fonts and cover images on the phone so it opens without internet.
  * When releasing a new version, bump VERSION here and the ?v= numbers in index.html.
  */
-const VERSION = '1.2.1';
+const VERSION = '1.3.0';
 const CACHE = 'lyrica-app-' + VERSION;
 const RUNTIME = 'lyrica-runtime-v1';
 const SHELL = ['./', 'index.html', 'style.css?v=' + VERSION, 'app.js?v=' + VERSION, 'manifest.webmanifest',

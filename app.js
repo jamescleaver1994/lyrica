@@ -4,7 +4,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.3.0';
 const LRCLIB = 'https://lrclib.net/api';
 const ITUNES = 'https://itunes.apple.com/search';
 const DEEZER = 'https://api.deezer.com';
@@ -118,7 +118,7 @@ const store = {
 
 const DEFAULT_SETTINGS = {
   fontSize: 28, resumeDelay: 3, countIn: '1bar', clickSound: true, autoBpm: true, metroOn: false,
-  showChords: true, keepAwake: true, motion: true, covers: true, libView: 'songs', libSort: 'recent',
+  showChords: true, sections: true, keepAwake: true, motion: true, covers: true, libView: 'songs', libSort: 'recent',
 };
 let settings = Object.assign({}, DEFAULT_SETTINGS, store.get('lyrica.settings', {}));
 if (!settings.v120) { // one-off upgrade: move the old 3 second default to an on-beat count-in
@@ -344,7 +344,9 @@ function songSubtitle(song) {
 
 /* ---------------- lyric parsing ---------------- */
 const CHORD_RE = /^(N\.?C\.?|[A-G](?:#|b|♯|♭)?(?:maj|min|m|M|dim|aug|sus|add|°|ø|\+|-)?\d*(?:(?:sus|add|maj|b|#)\d+)*(?:\/[A-G](?:#|b)?)?)$/;
-const SECTION_RE = /^\s*[\[(]?\s*(verse|chorus|pre-?chorus|bridge|intro|outro|hook|solo|instrumental|interlude|refrain|tag|coda|break|post-?chorus)\b[^\])]*[\])]?\s*:?\s*$/i;
+const SECTION_WORDS = '(?:verse|chorus|pre-?chorus|bridge|intro|outro|hook|solo|instrumental|interlude|refrain|tag|coda|break|post-?chorus)';
+// "[Chorus]", "(Verse 2)", or a bare "Chorus" / "Verse 2:" / "Chorus x2" on its own line. Not "Break my heart".
+const SECTION_RE = new RegExp('^\\s*(?:[\\[(]\\s*' + SECTION_WORDS + '\\b[^\\])]*[\\])]|' + SECTION_WORDS + '(?:\\s*\\d+)?(?:\\s*[x×]\\s*\\d+)?\\s*:?)\\s*$', 'i');
 const TS_RE = /^\s*\[(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)\]/;
 const META_RE = /^\s*\[(ar|ti|al|au|by|length|re|ve|offset|#):([^\]]*)\]\s*$/i;
 
@@ -486,6 +488,97 @@ function buildTimeline(parsed, song) {
   lines.forEach((l, i) => { if (isTimed(l) && l.time != null) order.push(i); });
   order.sort((a, b) => lines[a].time - lines[b].time || a - b);
   return { lines, end, order };
+}
+
+/* ---------------- section headings (best guess) ----------------
+ * Lyrics libraries don't label verses and choruses, so this guesses them:
+ * split the song into blocks (blank lines, instrumental breaks or long pauses),
+ * treat the block that repeats most as the chorus, a short repeated block just before it
+ * as the pre-chorus, a one-off block between later choruses as the bridge, and number the rest as verses.
+ * Songs that already have [Chorus]-style tags are left alone. Self-contained: remove this block,
+ * its one call in the player and the setting to take the feature out.
+ */
+function guessSections(parsed) {
+  const lines = parsed.lines;
+  if (lines.some((l) => l.kind === 'note')) return parsed; // the song already has its own headings
+  const lyricIdx = lines.map((l, i) => (l.kind === 'lyric' && l.hasWords ? i : -1)).filter((i) => i >= 0);
+  if (lyricIdx.length < 6) return parsed;
+
+  // typical gap between lines, for spotting pauses in synced lyrics
+  let longGap = Infinity;
+  if (parsed.synced) {
+    const gaps = lyricIdx.slice(1).map((i, k) => lines[i].time - lines[lyricIdx[k]].time).filter((g) => g > 0).sort((a, b) => a - b);
+    const median = gaps[Math.floor(gaps.length / 2)] || 3;
+    longGap = Math.max(4.5, median * 2.2);
+  }
+
+  // 1. split into blocks of lyric line indexes
+  const blocks = [];
+  let cur = [];
+  let prev = null;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    const breakHere = l.kind === 'gap' || l.kind === 'pause';
+    if (breakHere) { if (cur.length) blocks.push(cur); cur = []; prev = null; continue; }
+    if (l.kind !== 'lyric' || !l.hasWords) continue;
+    if (prev != null && parsed.synced && l.time - lines[prev].time > longGap && cur.length) { blocks.push(cur); cur = []; }
+    cur.push(i);
+    prev = i;
+  }
+  if (cur.length) blocks.push(cur);
+  // very long unbroken blocks give us nothing to work with
+  if (blocks.length < 2) return parsed;
+
+  // 2. group blocks that share most of their lines
+  const norm = (i) => lines[i].src.replace(/\[[^\]]*\]/g, '').toLowerCase().replace(/[^a-z0-9À-ɏ ]+/g, '').replace(/\s+/g, ' ').trim();
+  const sets = blocks.map((b) => new Set(b.map(norm)));
+  const similar = (a, b) => {
+    let shared = 0;
+    for (const x of sets[a]) if (sets[b].has(x)) shared++;
+    return shared / Math.min(sets[a].size, sets[b].size);
+  };
+  const group = blocks.map((_, i) => i);
+  for (let a = 0; a < blocks.length; a++) {
+    for (let b = 0; b < a; b++) if (group[b] === b && similar(a, b) >= 0.6) { group[a] = b; break; }
+  }
+  const counts = new Map();
+  group.forEach((g) => counts.set(g, (counts.get(g) || 0) + 1));
+
+  // 3. the chorus is the repeated group with the most lines overall
+  let chorus = null, best = 0;
+  for (const [g, n] of counts) if (n >= 2 && n * blocks[g].length > best) { best = n * blocks[g].length; chorus = g; }
+
+  // 4. name every block
+  const names = [];
+  let verse = 0, chorusSeen = 0;
+  const lastChorusAt = group.lastIndexOf(chorus);
+  for (let k = 0; k < blocks.length; k++) {
+    const g = group[k];
+    const n = counts.get(g);
+    const nextIsChorus = chorus != null && group[k + 1] === chorus;
+    let name;
+    if (g === chorus) { name = 'Chorus'; chorusSeen++; }
+    else if (n >= 2 && nextIsChorus && blocks[k].length <= 4) name = 'Pre-chorus';
+    else if (n >= 2 && chorus != null && group[k - 1] === chorus) name = 'Post-chorus';
+    else if (n >= 2 && chorus != null) name = 'Refrain';
+    else if (k === 0 && blocks[k].length <= 2 && blocks.length > 2) name = 'Intro';
+    else if (chorus != null && k > lastChorusAt && k === blocks.length - 1 && blocks[k].length <= 4) name = 'Outro';
+    else if (chorus != null && chorusSeen >= 2 && k < lastChorusAt && verse >= 2) name = 'Bridge';
+    else name = 'Verse ' + ++verse;
+    names.push(name);
+  }
+  // a song with one "verse" and no chorus doesn't need a heading
+  if (chorus == null && verse < 2) return parsed;
+  if (verse === 1) names[names.indexOf('Verse 1')] = 'Verse';
+
+  // 5. insert the headings
+  const startOf = new Map(blocks.map((b, k) => [b[0], names[k]]));
+  const out = [];
+  lines.forEach((l, i) => {
+    if (startOf.has(i)) out.push({ kind: 'note', guess: true, src: startOf.get(i), segs: [], hasChords: false, hasWords: true, time: null });
+    out.push(l);
+  });
+  return Object.assign({}, parsed, { lines: out });
 }
 
 /* ---------------- router ---------------- */
@@ -991,6 +1084,7 @@ function openSettings() {
   $('#set-click').checked = settings.clickSound;
   $('#set-bpm').checked = settings.autoBpm;
   $('#set-chords').checked = settings.showChords;
+  $('#set-sections').checked = settings.sections;
   $('#set-wake').checked = settings.keepAwake;
   $('#set-motion').checked = settings.motion;
   $('#set-covers').checked = settings.covers;
@@ -1003,6 +1097,7 @@ $('#set-countin').addEventListener('change', (e) => { settings.countIn = e.targe
 $('#set-click').addEventListener('change', (e) => { settings.clickSound = e.target.checked; saveSettings(); });
 $('#set-bpm').addEventListener('change', (e) => { settings.autoBpm = e.target.checked; saveSettings(); });
 $('#set-chords').addEventListener('change', (e) => { settings.showChords = e.target.checked; saveSettings(); });
+$('#set-sections').addEventListener('change', (e) => { settings.sections = e.target.checked; saveSettings(); });
 $('#set-wake').addEventListener('change', (e) => { settings.keepAwake = e.target.checked; saveSettings(); });
 $('#set-motion').addEventListener('change', (e) => { settings.motion = e.target.checked; saveSettings(); });
 $('#set-covers').addEventListener('change', (e) => { settings.covers = e.target.checked; saveSettings(); });
@@ -1070,7 +1165,7 @@ document.addEventListener('visibilitychange', () => {
 
 /* Renders one lyric line. Chord lines are split word by word so long lines wrap naturally. */
 function lineNode(l, i) {
-  const d = el('div', 'line ' + l.kind);
+  const d = el('div', 'line ' + l.kind + (l.guess ? ' guess' : ''));
   d.dataset.i = i;
   if (l.kind === 'pause') { d.append(el('b'), el('b'), el('b')); return d; }
   if (l.kind === 'gap') { d.innerHTML = '&nbsp;'; return d; }
@@ -1184,7 +1279,8 @@ const player = {
     $('#p-more-panel').hidden = true;
     $('#p-next').hidden = !this.nextSong();
     show('player');
-    const parsed = parseLyrics(song.lyrics);
+    let parsed = parseLyrics(song.lyrics);
+    if (settings.sections) parsed = guessSections(parsed);
     this.synced = parsed.synced;
     this.useTimeline(buildTimeline(parsed, song));
     wake.on();
@@ -1287,7 +1383,7 @@ const player = {
     this.updateUi();
   },
   setSpeed(v) {
-    this.song.speed = Math.round(clamp(v, 0.5, 2) * 100) / 100;
+    this.song.speed = Math.round(clamp(v, 0.5, 2) * 1000) / 1000;
     upsertSong(this.song);
     if (metro.running && this.song.bpm) metro.bpm = this.song.bpm * this.song.speed;
     this.updateUi();
@@ -1326,6 +1422,15 @@ const player = {
     if (metro.running && bpm) metro.bpm = bpm * (this.song.speed || 1);
     this.updateUi();
   },
+  /* Tempo model: song.bpm is the song's own tempo, song.speed scales everything.
+   * What you hear and see is bpm x speed, so the speed and the metronome can never disagree. */
+  playingBpm() { return this.song.bpm ? Math.round(this.song.bpm * (this.song.speed || 1)) : null; },
+  setPlayingBpm(target) {
+    if (!this.song.bpm) return;
+    const speed = clamp(target / this.song.bpm, 0.5, 2);
+    if (speed !== target / this.song.bpm) toast('Tempo can go from half to double the song\'s own ' + this.song.bpm + ' BPM');
+    this.setSpeed(speed);
+  },
   setBpm(bpm, source) {
     this.song.bpm = Math.round(clamp(bpm, 30, 300));
     this.song.bpmSource = source;
@@ -1340,8 +1445,13 @@ const player = {
     this.taps = this.taps.slice(-8);
     if (this.taps.length >= 3) {
       const gaps = this.taps.slice(1).map((t, i) => t - this.taps[i]);
-      this.setBpm(60000 / (gaps.reduce((a, b) => a + b, 0) / gaps.length), 'tap');
-    } else toast('Keep tapping on the beat');
+      const tapped = 60000 / (gaps.reduce((a, b) => a + b, 0) / gaps.length);
+      // what you tap is what you hear: keep the current speed and work out the song's own tempo from it
+      this.setBpm(tapped / (this.song.speed || 1), 'tap');
+      $('#p-tap').classList.add('done');
+    } else {
+      $('#p-tempo-hint').textContent = this.taps.length === 1 ? 'Keep tapping on the beat…' : 'One more…';
+    }
   },
   updateUi() {
     const btn = $('#p-play');
@@ -1350,13 +1460,22 @@ const player = {
     btn.setAttribute('aria-label', this.playing ? 'Pause' : 'Play');
     $('#view-player').classList.toggle('is-playing', this.playing);
     if (!this.song) return;
-    $('#p-speed').textContent = Math.round((this.song.speed || 1) * 100) + '%';
-    $('#p-bpm').textContent = this.song.bpm ? this.song.bpm + ' BPM' : 'No tempo';
     const on = !!settings.metroOn;
-    $('#p-metro').setAttribute('aria-pressed', String(on));
-    $('#p-metro-chip').setAttribute('aria-pressed', String(on));
-    $('#p-metro-label').textContent = !on ? 'Click off' : this.song.bpm ? this.song.bpm + ' BPM' : 'Set tempo';
-    $('#p-beat').hidden = !(on && this.song.bpm);
+    const has = !!this.song.bpm;
+    const pct = Math.round((this.song.speed || 1) * 100);
+    const input = $('#p-tempo-input');
+    if (document.activeElement !== input) input.value = has ? this.playingBpm() : pct;
+    $('#p-tempo-unit').textContent = has ? 'BPM' : '% speed';
+    $('#p-tempo').classList.toggle('no-bpm', !has);
+    $('#p-metro').setAttribute('aria-pressed', String(on && has));
+    $('#p-metro').disabled = !has;
+    $('#p-beat').hidden = !(on && has);
+    $('#p-tap').textContent = has ? 'Tap' : 'Tap tempo';
+    $('#p-tap').classList.remove('done');
+    const hint = $('#p-tempo-hint');
+    if (!has) hint.textContent = 'No tempo found. Tap along with the beat to set one.';
+    else if (pct !== 100) hint.textContent = 'Song tempo ' + this.song.bpm + ' BPM, playing at ' + pct + '%';
+    else hint.textContent = '';
   },
   finished() {
     this.pause();
@@ -1504,7 +1623,8 @@ const player = {
     if (was && !silent && this.song) {
       this.pause();
       this.t = 0;
-      const parsed = parseLyrics(this.song.lyrics);
+      let parsed = parseLyrics(this.song.lyrics);
+      if (settings.sections) parsed = guessSections(parsed);
       this.synced = parsed.synced;
       this.useTimeline(buildTimeline(parsed, this.song));
       this.updateUi();
@@ -1516,9 +1636,6 @@ const player = {
 $('#p-back').onclick = () => player.back();
 $('#p-play').onclick = () => player.toggle();
 $('#p-restart').onclick = () => player.restart();
-$('#p-slower').onclick = () => { player.setSpeed((player.song.speed || 1) - 0.05); toast('Speed ' + Math.round(player.song.speed * 100) + '%'); };
-$('#p-faster').onclick = () => { player.setSpeed((player.song.speed || 1) + 0.05); toast('Speed ' + Math.round(player.song.speed * 100) + '%'); };
-$('#p-speed-reset').onclick = () => player.setSpeed(1);
 $('#p-more').onclick = () => { $('#p-more-panel').hidden = !$('#p-more-panel').hidden; requestAnimationFrame(() => player.layout()); };
 const changeFont = (d) => { settings.fontSize = clamp(settings.fontSize + d, 18, 56); saveSettings(); requestAnimationFrame(() => player.layout()); };
 $('#p-font-down').onclick = () => changeFont(-2);
@@ -1527,22 +1644,34 @@ $('#p-chords-toggle').onclick = () => { settings.showChords = !settings.showChor
 $('#p-edit').onclick = () => { if (player.song) location.hash = '#/edit/' + player.song.id; };
 $('#p-tap-time').onclick = () => player.startTiming();
 function toggleMetronome() {
+  if (!player.song.bpm) { toast('Tap along with the beat first to set a tempo'); return; }
   settings.metroOn = !settings.metroOn;
   saveSettings();
   metro.ensure(); // unlock audio on this tap
-  if (settings.metroOn && !player.song.bpm) {
-    $('#p-more-panel').hidden = false;
-    requestAnimationFrame(() => player.layout());
-    toast('This song has no tempo yet. Tap the Tap button along with the beat.');
-  }
   if (settings.metroOn && player.playing && !player.countIn) player.startMetro();
   else if (!settings.metroOn) metro.stop();
   player.updateUi();
 }
 $('#p-metro').onclick = toggleMetronome;
-$('#p-metro-chip').onclick = toggleMetronome;
-$('#p-bpm-down').onclick = () => player.setBpm((player.song.bpm || 101) - 1, 'manual');
-$('#p-bpm-up').onclick = () => player.setBpm((player.song.bpm || 99) + 1, 'manual');
+const stepTempo = (dir) => {
+  if (player.song.bpm) player.setPlayingBpm(player.playingBpm() + dir);
+  else player.setSpeed((player.song.speed || 1) + dir * 0.05);
+};
+$('#p-down').onclick = () => stepTempo(-1);
+$('#p-up').onclick = () => stepTempo(1);
+const tempoInput = $('#p-tempo-input');
+const commitTempo = () => {
+  const n = parseFloat(tempoInput.value);
+  if (isFinite(n) && n > 0) {
+    if (player.song.bpm) player.setPlayingBpm(n);
+    else player.setSpeed(n / 100);
+  }
+  tempoInput.blur();
+  player.updateUi();
+};
+tempoInput.addEventListener('focus', () => tempoInput.select());
+tempoInput.addEventListener('change', commitTempo);
+tempoInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') commitTempo(); });
 $('#p-tap').onclick = () => { metro.ensure(); player.tapTempo(); };
 $('#p-next').onclick = () => player.goNext();
 $('#t-next').onclick = () => player.timingTap();

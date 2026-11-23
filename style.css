@@ -398,3 +398,42 @@ html.in-player .tabbar, .tabbar.hide { display: none; }
 .metro-chip svg { width: 16px; height: 16px; }
 .metro-chip[aria-pressed="true"] { color: var(--accent-2); background: color-mix(in srgb, var(--accent) 18%, transparent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .metro-chip .beat-dot { width: 7px; height: 7px; }
+.line.note.guess {
+  font: 650 max(12px, .44em)/1.2 var(--font-display); font-style: normal; letter-spacing: .12em;
+  color: var(--accent-2); opacity: .7; padding: 18px 4px 2px; cursor: default;
+  display: flex; align-items: center; gap: 10px;
+}
+.line.note.guess::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 35%, transparent), transparent); }
+.line.note.guess:first-child { padding-top: 0; }
+
+/* ===== Tempo control: metronome toggle, BPM stepper, tap tempo ===== */
+.tempo { display: flex; align-items: center; justify-content: center; gap: 10px; max-width: 420px; margin: 2px auto 0; }
+.metro-toggle {
+  position: relative; width: 44px; height: 44px; border-radius: 50%; flex: none; display: grid; place-items: center; cursor: pointer;
+  color: var(--muted); background: var(--surface); border: 1px solid var(--border); padding: 0;
+}
+.metro-toggle svg { width: 20px; height: 20px; }
+.metro-toggle[aria-pressed="true"] { color: var(--accent-2); background: color-mix(in srgb, var(--accent) 20%, transparent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.metro-toggle:disabled { opacity: .4; cursor: default; }
+.metro-toggle .beat-dot { position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; }
+.stepper { display: flex; align-items: center; height: 44px; border-radius: 22px; background: var(--surface); border: 1px solid var(--border); overflow: hidden; }
+.stepper button { width: 44px; height: 44px; border: 0; background: transparent; color: var(--text); display: grid; place-items: center; cursor: pointer; padding: 0; }
+.stepper button svg { width: 18px; height: 18px; }
+.stepper button:active { background: var(--surface-strong); }
+.tempo-field { flex-direction: row; align-items: baseline; gap: 4px; color: var(--muted); padding: 0 2px; cursor: text; }
+.tempo-field input {
+  width: 3.2ch; border: 0; background: transparent; color: var(--text); text-align: right; padding: 0;
+  font: 700 20px var(--font-display); font-variant-numeric: tabular-nums;
+}
+.tempo-field input:focus { outline: none; color: var(--accent-2); }
+.tempo-field span { font: 600 11px var(--font-display); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+.tap-btn {
+  height: 44px; padding: 0 16px; border-radius: 22px; cursor: pointer; flex: none;
+  font: 600 14px var(--font-display); color: var(--text); background: var(--surface); border: 1px solid var(--border);
+}
+.tap-btn:active { transform: scale(.96); background: var(--surface-strong); }
+.no-bpm .tap-btn { color: var(--accent-text); background: linear-gradient(135deg, var(--accent-2), var(--accent)); border-color: transparent; box-shadow: 0 0 0 0 var(--glow-1); animation: tapcall 2.4s ease-in-out infinite; }
+@keyframes tapcall { 50% { box-shadow: 0 0 0 6px transparent, 0 0 18px var(--glow-1); } }
+.tempo-hint { min-height: 18px; text-align: center; font-size: 12px; color: var(--muted); margin: 6px 0 2px; }
+.tempo-hint:empty { min-height: 0; margin: 0; }
+.ctrl-row { justify-content: space-evenly; }
