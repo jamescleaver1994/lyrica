@@ -4,7 +4,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.4.1';
+const APP_VERSION = '1.4.2';
 const LRCLIB = 'https://lrclib.net/api';
 const ITUNES = 'https://itunes.apple.com/search';
 const DEEZER = 'https://api.deezer.com';
@@ -238,7 +238,13 @@ function revisitList() {
 const coverQueue = [];
 let coverBusy = false;
 function needsCover(song) { return settings.covers && song.art === undefined && (song.title || '').trim(); }
-function needsBpm(song) { return settings.autoBpm && song.bpm === undefined && (song.title || '').trim(); }
+/* BPM_CHECK bumps when the online lookup improves, so songs that found nothing before get one more try. */
+const BPM_CHECK = 2;
+function needsBpm(song) {
+  if (!settings.autoBpm || !(song.title || '').trim()) return false;
+  if (song.bpm === undefined) return true;
+  return song.bpm === null && (song.bpmCheck || 0) < BPM_CHECK;
+}
 function queueEnrich(song) { if (needsCover(song) || needsBpm(song)) queueCover(song); }
 function queueCover(song) {
   if ((!needsCover(song) && !needsBpm(song)) || coverQueue.includes(song.id)) return;
@@ -263,7 +269,8 @@ async function runCoverQueue() {
     try {
       const bpm = await lookupBpm(song.title, song.artist);
       song.bpm = bpm || null;
-      if (bpm) song.bpmSource = 'deezer';
+      song.bpmCheck = BPM_CHECK;
+      if (bpm) song.bpmSource = 'deezer'; // a suggestion until the user checks it
       upsertSong(song);
       if (player.song && player.song.id === song.id) player.tempoChanged();
     } catch { /* try again next launch */ }
@@ -291,17 +298,38 @@ async function lookupCover(title, artist) {
   return { art: best.artworkUrl100.replace(/\/\d+x\d+bb\./, '/300x300bb.'), duration: best.trackTimeMillis ? Math.round(best.trackTimeMillis / 1000) : null };
 }
 /* Song tempo from Deezer's free API. It has no CORS support, so it is read with JSONP.
- * Deezer returns 0 when it does not know the tempo; we then leave it for tap tempo or manual entry. */
+ * A plain "artist title" search finds far more than Deezer's strict artist:/track: syntax.
+ * We prefer the original studio recording over live, acoustic, remastered or medley versions,
+ * and try a few candidates because Deezer returns 0 when it doesn't know a track's tempo. */
+const ALT_VERSION = /\b(live|acoustic|remaster(ed)?|demo|medley|version|edit|mix|remix|karaoke|instrumental|cover|tribute|session|unplugged|rehearsal|orchestral|piano|sped|slowed)\b/i;
+function bpmNorm(x) { return String(x || '').toLowerCase().replace(/\(.*?\)|\[.*?\]|\s-\s.*$|feat\..*|ft\..*|[^a-z0-9]/g, ''); }
+function rankBpmHits(hits, title, artist) {
+  const t = bpmNorm(title);
+  const a = bpmNorm(artist);
+  const scored = [];
+  hits.forEach((r, i) => {
+    const rt = bpmNorm(r.title_short || r.title);
+    if (!t || !rt || !(rt === t || rt.includes(t) || t.includes(rt))) return;
+    let score = i; // Deezer's own order, mostly popularity
+    if (rt !== t) score += 6;
+    const ra = bpmNorm(r.artist && r.artist.name);
+    if (a && !(ra === a || ra.includes(a) || a.includes(ra))) score += 20;
+    const extra = [r.title, r.title_version, r.album && r.album.title].filter(Boolean).join(' ');
+    if (ALT_VERSION.test(extra)) score += 12;
+    scored.push({ r, score });
+  });
+  return scored.sort((x, y) => x.score - y.score).map((x) => x.r);
+}
 async function lookupBpm(title, artist) {
-  const q = artist ? 'artist:"' + artist + '" track:"' + title + '"' : title;
-  const found = await jsonp(DEEZER + '/search?' + new URLSearchParams({ q, limit: '5', output: 'jsonp' }));
-  const norm = (x) => String(x || '').toLowerCase().replace(/\(.*?\)|\[.*?\]|feat\..*|[^a-z0-9]/g, '');
-  const hits = (found && found.data) || [];
-  const hit = hits.find((r) => norm(r.title) === norm(title)) || hits[0];
-  if (!hit) return null;
-  const track = await jsonp(DEEZER + '/track/' + hit.id + '?output=jsonp');
-  const bpm = track && Math.round(track.bpm || 0);
-  return bpm >= 30 && bpm <= 300 ? bpm : null;
+  const q = [artist, title].filter(Boolean).join(' ');
+  const found = await jsonp(DEEZER + '/search?' + new URLSearchParams({ q, limit: '15', output: 'jsonp' }));
+  const ranked = rankBpmHits((found && found.data) || [], title, artist).slice(0, 3);
+  for (const hit of ranked) {
+    const track = await jsonp(DEEZER + '/track/' + hit.id + '?output=jsonp');
+    const bpm = track && Math.round(track.bpm || 0);
+    if (bpm >= 30 && bpm <= 300) return bpm;
+  }
+  return null;
 }
 function jsonp(url) {
   return new Promise((resolve, reject) => {
@@ -951,7 +979,7 @@ function openEditor(id) {
   $('#edit-duration').value = editing.duration ? fmtTime(editing.duration) : '';
   $('#edit-bpm').value = editing.bpm || '';
   $('#edit-bpb').value = String(editing.beatsPerBar || 4);
-  $('#edit-bpm-note').textContent = editing.bpm && editing.bpmSource === 'deezer' ? 'Found online. Worth checking against the recording.' : 'Type it in or tap along with the recording.';
+  $('#edit-bpm-note').textContent = editing.bpm && editing.bpmSource === 'deezer' ? 'Suggested from online data. Tap along to check it.' : 'Tap along with the recording, or type it in.';
   $('#edit-tap').textContent = 'Tap on the beat';
   $('#edit-lyrics').value = editing.lyrics || '';
   editDirty = false;
@@ -979,7 +1007,7 @@ $('#edit-save').onclick = () => {
   editing.lyrics = lyrics;
   if (!before || before.title !== editing.title || before.artist !== editing.artist) {
     delete editing.art; // look the cover (and tempo, unless set by hand) up again
-    if (editing.bpmSource !== 'manual' && editing.bpmSource !== 'tap') delete editing.bpm;
+    if (!['manual', 'tap', 'confirmed'].includes(editing.bpmSource)) delete editing.bpm;
   }
   upsertSong(editing);
   queueEnrich(editing);
@@ -1365,9 +1393,12 @@ const player = {
     const on = !!settings.metroOn;
     const has = !!this.song.bpm;
     const pct = Math.round((this.song.speed || 1) * 100);
+    const suggested = has && this.song.bpmSource === 'deezer';
     $('#p-tempo-btn').classList.toggle('empty', !has);
-    $('#p-tempo-num').textContent = has ? String(this.playingBpm()) : 'Add';
-    $('#p-tempo-sub').textContent = has ? 'BPM · ' + timeSig(this.song.beatsPerBar) : 'tempo';
+    $('#p-tempo-btn').classList.toggle('suggested', suggested);
+    $('#p-tempo-num').textContent = has ? String(this.playingBpm()) : 'Tap';
+    $('#p-tempo-sub').textContent = !has ? 'to set tempo' : suggested ? 'Check tempo' : 'BPM · ' + timeSig(this.song.beatsPerBar);
+    $('#p-tempo-btn').setAttribute('aria-label', !has ? 'Set the tempo by tapping' : suggested ? 'Suggested tempo, tap to check it' : 'Song tempo');
     $('#p-metro').setAttribute('aria-pressed', String(on && has));
     $('#p-metro').classList.toggle('unavailable', !has);
     $('#p-beat').hidden = !(on && has);
@@ -1574,14 +1605,72 @@ function makeTapper(onBpm, onStep) {
 const SIGS = { 2: '2/4', 3: '3/4', 4: '4/4', 5: '5/4', 6: '6/8', 7: '7/8' };
 function timeSig(bpb) { return SIGS[bpb || 4] || (bpb + '/4'); }
 
-/* The song's tempo: the main way to set it. Typing, nudging and tapping all set the song's real tempo. */
+/* A tempo found online is sometimes counted at double or half the speed people feel it. */
+function tempoAlt(bpm) {
+  if (bpm >= 150) return Math.round(bpm / 2);
+  if (bpm <= 75) return bpm * 2;
+  return null;
+}
+/* Compare a tapped tempo with a suggestion: same, half, double or just different. */
+function compareTap(tapped, suggested) {
+  const near = (a, b) => Math.abs(a - b) / b <= 0.05;
+  if (near(tapped, suggested)) return 'same';
+  if (near(tapped, suggested / 2)) return 'half';
+  if (near(tapped, suggested * 2)) return 'double';
+  return 'other';
+}
+
+/* The song's tempo: the main way to set it. Tapping comes first; typing and nudging are there too.
+ * A tempo found online is shown as a suggestion to check against a few taps. */
 function openTempoSheet() {
   const song = player.song;
   if (!song) return;
   let bpm = song.bpm || null;
   let bpb = song.beatsPerBar || 4;
+  let source = song.bpmSource || 'manual';
+  const suggestion = song.bpm && song.bpmSource === 'deezer' ? song.bpm : null;
   const body = el('div', 'stack tempo-sheet');
-  body.appendChild(el('p', 'muted small', 'Set the tempo of the original recording. The count-in and click follow it, and practice speed is applied on top.'));
+  body.appendChild(el('p', 'muted small', bpm
+    ? 'The tempo of the original recording. The count-in and click follow it, and practice speed is applied on top.'
+    : 'Play the recording and tap along on the beat. Four taps is enough, more makes it steadier.'));
+
+  // suggestion card: found online, not yet checked
+  let card = null;
+  let cardMsg = null;
+  let cardActions = null;
+  if (suggestion) {
+    card = el('div', 'suggest-card');
+    card.appendChild(el('div', 'suggest-title', 'Found online: ' + suggestion + ' BPM. Sounds right?'));
+    cardMsg = el('p', 'muted small', 'Tap along with the recording below to check it.');
+    card.appendChild(cardMsg);
+    cardActions = el('div', 'row gap wrap');
+    card.appendChild(cardActions);
+    body.appendChild(card);
+  }
+  const setCard = (msg, actions) => {
+    if (!card) return;
+    cardMsg.textContent = msg;
+    cardActions.innerHTML = '';
+    for (const a of actions) {
+      const b = el('button', 'btn small' + (a.primary ? ' primary' : ''), a.label);
+      b.type = 'button';
+      b.onclick = a.run;
+      cardActions.appendChild(b);
+    }
+  };
+  const confirmAction = { label: 'Sounds right', primary: true, run: () => { bpm = suggestion; source = 'confirmed'; sync(); setCard('Confirmed. Save to keep it.', []); card.classList.add('ok'); } };
+  const resetCard = () => {
+    const alt = tempoAlt(suggestion);
+    const acts = [confirmAction];
+    if (alt) acts.push({ label: (alt < suggestion ? 'Use half: ' : 'Use double: ') + alt, run: () => { bpm = alt; source = 'manual'; sync(); setCard('Using ' + alt + ' BPM. Save to keep it.', []); } });
+    setCard(alt
+      ? (alt < suggestion ? 'That\'s quick. Online tempos are sometimes counted double, so ' + alt + ' may be what you feel.' : 'That\'s slow. Online tempos are sometimes counted half, so ' + alt + ' may be what you feel.') + ' Tap along below to check.'
+      : 'Tap along with the recording below to check it.', acts);
+  };
+  if (suggestion) resetCard();
+
+  const pad = el('button', 'tap-pad' + (bpm ? '' : ' lead'), 'Tap here on the beat');
+  pad.type = 'button';
   const big = el('div', 'big-stepper');
   const down = iconBtn('minus', 'Slower');
   const up = iconBtn('plus', 'Faster');
@@ -1593,19 +1682,28 @@ function openTempoSheet() {
   const mid = el('label', 'big-mid');
   mid.append(input, unit);
   big.append(down, mid, up);
-  body.appendChild(big);
+  // with no tempo yet, tapping is the first thing you see
+  if (bpm) body.append(big, pad); else body.append(pad, big);
   const sync = () => { input.value = bpm || ''; };
   sync();
-  const nudge = (d) => { bpm = clamp((bpm || 100) + d, 30, 300); sync(); };
+  const nudge = (d) => { bpm = clamp((bpm || 100) + d, 30, 300); source = 'manual'; sync(); };
   down.onclick = () => nudge(-1);
   up.onclick = () => nudge(1);
-  input.addEventListener('input', () => { const n = parseInt(input.value, 10); bpm = n >= 30 && n <= 300 ? n : null; pad.textContent = 'Tap here on the beat'; });
+  input.addEventListener('input', () => { const n = parseInt(input.value, 10); bpm = n >= 30 && n <= 300 ? n : null; source = 'manual'; pad.textContent = 'Tap here on the beat'; });
   input.addEventListener('focus', () => input.select());
-  const pad = el('button', 'tap-pad', 'Tap here on the beat');
-  pad.type = 'button';
-  const tap = makeTapper((n) => { bpm = n; sync(); pad.textContent = n + ' BPM · keep tapping to refine'; }, (left) => { pad.textContent = 'Keep going… ' + left + ' more'; });
+  const tap = makeTapper((n) => {
+    if (!suggestion) { bpm = n; source = 'tap'; sync(); pad.textContent = n + ' BPM · keep tapping to refine'; return; }
+    const how = compareTap(n, suggestion);
+    pad.textContent = 'You tapped ' + n + ' BPM · keep tapping to refine';
+    if (how === 'same') { bpm = suggestion; source = 'confirmed'; sync(); card.classList.add('ok'); setCard('Matches what you tapped. Save to keep it.', []); return; }
+    card.classList.remove('ok');
+    bpm = n; source = 'tap'; sync();
+    const useSugg = { label: 'Keep ' + suggestion, run: () => { bpm = suggestion; source = 'deezer'; sync(); resetCard(); } };
+    if (how === 'half') setCard('You\'re feeling it at half time. Using your ' + n + ' BPM, which keeps the count-in at the pace you play.', [useSugg]);
+    else if (how === 'double') setCard('You\'re feeling it at double time. Using your ' + n + ' BPM.', [useSugg]);
+    else setCard('That\'s different from the ' + suggestion + ' found online, so your tapped tempo will be used.', [useSugg]);
+  }, (left) => { pad.textContent = 'Keep going… ' + left + ' more'; });
   pad.onpointerdown = (e) => { e.preventDefault(); metro.ensure(); tap(); pad.classList.remove('hit'); void pad.offsetWidth; pad.classList.add('hit'); };
-  body.appendChild(pad);
   body.appendChild(el('div', 'field-label', 'Time signature'));
   const seg = el('div', 'segmented');
   for (const [v, label] of Object.entries(SIGS)) {
@@ -1615,12 +1713,11 @@ function openTempoSheet() {
     seg.appendChild(b);
   }
   body.appendChild(seg);
-  if (song.bpm && song.bpmSource === 'deezer') body.appendChild(el('p', 'muted small', 'This tempo was found online. Worth checking against the recording.'));
   openModal('Song tempo', body, [
     { label: 'Cancel' },
     { label: 'Save', primary: true, run: () => {
       song.beatsPerBar = bpb;
-      if (bpm) player.setBpm(bpm, song.bpm === bpm && song.bpmSource ? song.bpmSource : 'manual');
+      if (bpm) player.setBpm(bpm, bpm === song.bpm && source === 'manual' ? (song.bpmSource || 'manual') : source);
       else { upsertSong(song); player.updateUi(); }
       if (bpm && !settings.metroOn) toast('Tempo saved. The speaker button turns the click on.');
     } },

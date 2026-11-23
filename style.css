@@ -453,6 +453,8 @@ html.in-player .tabbar, .tabbar.hide { display: none; }
 .tp-text small { font: 600 10.5px var(--font-display); color: var(--muted); letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; }
 .tempo-pill.empty { border-style: dashed; border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
 .tempo-pill.empty .tp-text b { color: var(--accent-2); }
+.tempo-pill.suggested { border-color: color-mix(in srgb, var(--cool) 70%, transparent); }
+.tempo-pill.suggested .tp-text small { color: var(--chord); }
 .round-btn {
   position: relative; width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; padding: 0; flex: none;
   color: var(--text); background: var(--surface); border: 1px solid var(--border);
@@ -489,6 +491,13 @@ html.in-player .tabbar, .tabbar.hide { display: none; }
 .tap-pad.hit { animation: tappop .18s ease-out; }
 @keyframes tappop { from { transform: scale(.97); background-color: color-mix(in srgb, var(--accent) 25%, transparent); } }
 .tempo-sheet .segmented button { padding: 9px 2px; }
+.tap-pad.lead { min-height: 150px; font-size: 19px; border-width: 1.5px; }
+.suggest-card { display: flex; flex-direction: column; gap: 8px; padding: 14px; border-radius: var(--radius); background: color-mix(in srgb, var(--cool) 14%, transparent); border: 1px solid color-mix(in srgb, var(--cool) 45%, transparent); }
+.suggest-card.ok { background: color-mix(in srgb, var(--chord) 10%, transparent); border-color: color-mix(in srgb, var(--chord) 40%, transparent); }
+.suggest-card p { margin: 0; }
+.suggest-title { font: 700 16px var(--font-display); color: var(--text); }
+.suggest-card .row { flex-wrap: wrap; }
+.suggest-card .row:empty { display: none; }
 .speed-val { min-width: 120px; text-align: center; font-size: 15px; }
 
 /* editor tempo */
