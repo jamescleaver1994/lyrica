@@ -4,7 +4,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 const LRCLIB = 'https://lrclib.net/api';
 const ITUNES = 'https://itunes.apple.com/search';
 const DEEZER = 'https://api.deezer.com';
@@ -118,7 +118,7 @@ const store = {
 
 const DEFAULT_SETTINGS = {
   fontSize: 28, resumeDelay: 3, countIn: '1bar', clickSound: true, autoBpm: true, metroOn: false,
-  showChords: true, sections: true, keepAwake: true, motion: true, covers: true, libView: 'songs', libSort: 'recent',
+  showChords: true, keepAwake: true, motion: true, covers: true, libView: 'songs', libSort: 'recent',
 };
 let settings = Object.assign({}, DEFAULT_SETTINGS, store.get('lyrica.settings', {}));
 if (!settings.v120) { // one-off upgrade: move the old 3 second default to an on-beat count-in
@@ -488,97 +488,6 @@ function buildTimeline(parsed, song) {
   lines.forEach((l, i) => { if (isTimed(l) && l.time != null) order.push(i); });
   order.sort((a, b) => lines[a].time - lines[b].time || a - b);
   return { lines, end, order };
-}
-
-/* ---------------- section headings (best guess) ----------------
- * Lyrics libraries don't label verses and choruses, so this guesses them:
- * split the song into blocks (blank lines, instrumental breaks or long pauses),
- * treat the block that repeats most as the chorus, a short repeated block just before it
- * as the pre-chorus, a one-off block between later choruses as the bridge, and number the rest as verses.
- * Songs that already have [Chorus]-style tags are left alone. Self-contained: remove this block,
- * its one call in the player and the setting to take the feature out.
- */
-function guessSections(parsed) {
-  const lines = parsed.lines;
-  if (lines.some((l) => l.kind === 'note')) return parsed; // the song already has its own headings
-  const lyricIdx = lines.map((l, i) => (l.kind === 'lyric' && l.hasWords ? i : -1)).filter((i) => i >= 0);
-  if (lyricIdx.length < 6) return parsed;
-
-  // typical gap between lines, for spotting pauses in synced lyrics
-  let longGap = Infinity;
-  if (parsed.synced) {
-    const gaps = lyricIdx.slice(1).map((i, k) => lines[i].time - lines[lyricIdx[k]].time).filter((g) => g > 0).sort((a, b) => a - b);
-    const median = gaps[Math.floor(gaps.length / 2)] || 3;
-    longGap = Math.max(4.5, median * 2.2);
-  }
-
-  // 1. split into blocks of lyric line indexes
-  const blocks = [];
-  let cur = [];
-  let prev = null;
-  for (let i = 0; i < lines.length; i++) {
-    const l = lines[i];
-    const breakHere = l.kind === 'gap' || l.kind === 'pause';
-    if (breakHere) { if (cur.length) blocks.push(cur); cur = []; prev = null; continue; }
-    if (l.kind !== 'lyric' || !l.hasWords) continue;
-    if (prev != null && parsed.synced && l.time - lines[prev].time > longGap && cur.length) { blocks.push(cur); cur = []; }
-    cur.push(i);
-    prev = i;
-  }
-  if (cur.length) blocks.push(cur);
-  // very long unbroken blocks give us nothing to work with
-  if (blocks.length < 2) return parsed;
-
-  // 2. group blocks that share most of their lines
-  const norm = (i) => lines[i].src.replace(/\[[^\]]*\]/g, '').toLowerCase().replace(/[^a-z0-9À-ɏ ]+/g, '').replace(/\s+/g, ' ').trim();
-  const sets = blocks.map((b) => new Set(b.map(norm)));
-  const similar = (a, b) => {
-    let shared = 0;
-    for (const x of sets[a]) if (sets[b].has(x)) shared++;
-    return shared / Math.min(sets[a].size, sets[b].size);
-  };
-  const group = blocks.map((_, i) => i);
-  for (let a = 0; a < blocks.length; a++) {
-    for (let b = 0; b < a; b++) if (group[b] === b && similar(a, b) >= 0.6) { group[a] = b; break; }
-  }
-  const counts = new Map();
-  group.forEach((g) => counts.set(g, (counts.get(g) || 0) + 1));
-
-  // 3. the chorus is the repeated group with the most lines overall
-  let chorus = null, best = 0;
-  for (const [g, n] of counts) if (n >= 2 && n * blocks[g].length > best) { best = n * blocks[g].length; chorus = g; }
-
-  // 4. name every block
-  const names = [];
-  let verse = 0, chorusSeen = 0;
-  const lastChorusAt = group.lastIndexOf(chorus);
-  for (let k = 0; k < blocks.length; k++) {
-    const g = group[k];
-    const n = counts.get(g);
-    const nextIsChorus = chorus != null && group[k + 1] === chorus;
-    let name;
-    if (g === chorus) { name = 'Chorus'; chorusSeen++; }
-    else if (n >= 2 && nextIsChorus && blocks[k].length <= 4) name = 'Pre-chorus';
-    else if (n >= 2 && chorus != null && group[k - 1] === chorus) name = 'Post-chorus';
-    else if (n >= 2 && chorus != null) name = 'Refrain';
-    else if (k === 0 && blocks[k].length <= 2 && blocks.length > 2) name = 'Intro';
-    else if (chorus != null && k > lastChorusAt && k === blocks.length - 1 && blocks[k].length <= 4) name = 'Outro';
-    else if (chorus != null && chorusSeen >= 2 && k < lastChorusAt && verse >= 2) name = 'Bridge';
-    else name = 'Verse ' + ++verse;
-    names.push(name);
-  }
-  // a song with one "verse" and no chorus doesn't need a heading
-  if (chorus == null && verse < 2) return parsed;
-  if (verse === 1) names[names.indexOf('Verse 1')] = 'Verse';
-
-  // 5. insert the headings
-  const startOf = new Map(blocks.map((b, k) => [b[0], names[k]]));
-  const out = [];
-  lines.forEach((l, i) => {
-    if (startOf.has(i)) out.push({ kind: 'note', guess: true, src: startOf.get(i), segs: [], hasChords: false, hasWords: true, time: null });
-    out.push(l);
-  });
-  return Object.assign({}, parsed, { lines: out });
 }
 
 /* ---------------- router ---------------- */
@@ -1042,10 +951,14 @@ function openEditor(id) {
   $('#edit-duration').value = editing.duration ? fmtTime(editing.duration) : '';
   $('#edit-bpm').value = editing.bpm || '';
   $('#edit-bpb').value = String(editing.beatsPerBar || 4);
+  $('#edit-bpm-note').textContent = editing.bpm && editing.bpmSource === 'deezer' ? 'Found online. Worth checking against the recording.' : 'Type it in or tap along with the recording.';
+  $('#edit-tap').textContent = 'Tap on the beat';
   $('#edit-lyrics').value = editing.lyrics || '';
   editDirty = false;
   show('edit');
 }
+const editTap = makeTapper((n) => { $('#edit-bpm').value = n; editDirty = true; $('#edit-tap').textContent = n + ' BPM · keep tapping'; }, (left) => { $('#edit-tap').textContent = 'Keep going… ' + left + ' more'; });
+$('#edit-tap').onpointerdown = (e) => { e.preventDefault(); editTap(); };
 for (const id of ['#edit-title', '#edit-artist', '#edit-duration', '#edit-bpm', '#edit-bpb', '#edit-lyrics']) $(id).addEventListener('input', () => (editDirty = true));
 $('#edit-back').onclick = () => {
   if (editDirty && !confirm('Discard your changes?')) return;
@@ -1084,7 +997,6 @@ function openSettings() {
   $('#set-click').checked = settings.clickSound;
   $('#set-bpm').checked = settings.autoBpm;
   $('#set-chords').checked = settings.showChords;
-  $('#set-sections').checked = settings.sections;
   $('#set-wake').checked = settings.keepAwake;
   $('#set-motion').checked = settings.motion;
   $('#set-covers').checked = settings.covers;
@@ -1097,7 +1009,6 @@ $('#set-countin').addEventListener('change', (e) => { settings.countIn = e.targe
 $('#set-click').addEventListener('change', (e) => { settings.clickSound = e.target.checked; saveSettings(); });
 $('#set-bpm').addEventListener('change', (e) => { settings.autoBpm = e.target.checked; saveSettings(); });
 $('#set-chords').addEventListener('change', (e) => { settings.showChords = e.target.checked; saveSettings(); });
-$('#set-sections').addEventListener('change', (e) => { settings.sections = e.target.checked; saveSettings(); });
 $('#set-wake').addEventListener('change', (e) => { settings.keepAwake = e.target.checked; saveSettings(); });
 $('#set-motion').addEventListener('change', (e) => { settings.motion = e.target.checked; saveSettings(); });
 $('#set-covers').addEventListener('change', (e) => { settings.covers = e.target.checked; saveSettings(); });
@@ -1165,7 +1076,7 @@ document.addEventListener('visibilitychange', () => {
 
 /* Renders one lyric line. Chord lines are split word by word so long lines wrap naturally. */
 function lineNode(l, i) {
-  const d = el('div', 'line ' + l.kind + (l.guess ? ' guess' : ''));
+  const d = el('div', 'line ' + l.kind);
   d.dataset.i = i;
   if (l.kind === 'pause') { d.append(el('b'), el('b'), el('b')); return d; }
   if (l.kind === 'gap') { d.innerHTML = '&nbsp;'; return d; }
@@ -1276,11 +1187,8 @@ const player = {
     this.stopTiming(true);
     $('#p-title').textContent = song.title;
     $('#p-artist').textContent = song.artist || '';
-    $('#p-more-panel').hidden = true;
-    $('#p-next').hidden = !this.nextSong();
     show('player');
     let parsed = parseLyrics(song.lyrics);
-    if (settings.sections) parsed = guessSections(parsed);
     this.synced = parsed.synced;
     this.useTimeline(buildTimeline(parsed, song));
     wake.on();
@@ -1323,9 +1231,7 @@ const player = {
     box.classList.toggle('no-chords', !settings.showChords);
     this.nodes = tl.lines.map((l, i) => box.appendChild(lineNode(l, i)));
     this.cur = -2;
-    $('#p-mode').textContent = this.timing ? 'Timing' : this.synced ? 'Synced' : 'Auto pace';
-    $('#p-mode').className = 'badge' + (this.synced && !this.timing ? ' synced' : '');
-    $('#p-chords-toggle').hidden = !tl.lines.some((l) => l.hasChords);
+    this.hasChords = tl.lines.some((l) => l.hasChords);
     this.layout();
     box.scrollTop = 0;
   },
@@ -1352,7 +1258,10 @@ const player = {
     if (this.t >= this.tl.end - 0.1) { this.t = 0; this.maxT = 0; }
     this.playing = true;
     this.manualUntil = 0;
-    if (this.t < 0.05 && !this.timing) this.startCountIn();
+    if (this.t < 0.05 && !this.timing) {
+      if (this.song.skipIntro && this.synced) this.t = this.introSkipTo();
+      this.startCountIn();
+    }
     if (!this.countIn) this.startMetro();
     this.lastFrame = performance.now();
     wake.on();
@@ -1387,6 +1296,14 @@ const player = {
     upsertSong(this.song);
     if (metro.running && this.song.bpm) metro.bpm = this.song.bpm * this.song.speed;
     this.updateUi();
+  },
+  /* Start a bar (or 3 seconds) before the first sung line. */
+  introSkipTo() {
+    const o = this.tl.order;
+    if (!o.length) return 0;
+    const first = this.tl.lines[o[0]].time;
+    const lead = this.song.bpm ? (60 / this.song.bpm) * (this.song.beatsPerBar || 4) : 3;
+    return first - lead > 1 ? first - lead : 0;
   },
   /* Count-in: on the beat when the song has a tempo, otherwise a plain seconds countdown. */
   startCountIn() {
@@ -1438,21 +1355,6 @@ const player = {
     this.tempoChanged();
     if (settings.metroOn && this.playing && !this.countIn && !metro.running) this.startMetro();
   },
-  tapTempo() {
-    const now = performance.now();
-    if (this.taps.length && now - this.taps[this.taps.length - 1] > 2000) this.taps = [];
-    this.taps.push(now);
-    this.taps = this.taps.slice(-8);
-    if (this.taps.length >= 3) {
-      const gaps = this.taps.slice(1).map((t, i) => t - this.taps[i]);
-      const tapped = 60000 / (gaps.reduce((a, b) => a + b, 0) / gaps.length);
-      // what you tap is what you hear: keep the current speed and work out the song's own tempo from it
-      this.setBpm(tapped / (this.song.speed || 1), 'tap');
-      $('#p-tap').classList.add('done');
-    } else {
-      $('#p-tempo-hint').textContent = this.taps.length === 1 ? 'Keep tapping on the beat…' : 'One more…';
-    }
-  },
   updateUi() {
     const btn = $('#p-play');
     btn.innerHTML = '';
@@ -1463,19 +1365,15 @@ const player = {
     const on = !!settings.metroOn;
     const has = !!this.song.bpm;
     const pct = Math.round((this.song.speed || 1) * 100);
-    const input = $('#p-tempo-input');
-    if (document.activeElement !== input) input.value = has ? this.playingBpm() : pct;
-    $('#p-tempo-unit').textContent = has ? 'BPM' : '% speed';
-    $('#p-tempo').classList.toggle('no-bpm', !has);
+    $('#p-tempo-btn').classList.toggle('empty', !has);
+    $('#p-tempo-num').textContent = has ? String(this.playingBpm()) : 'Add';
+    $('#p-tempo-sub').textContent = has ? 'BPM · ' + timeSig(this.song.beatsPerBar) : 'tempo';
     $('#p-metro').setAttribute('aria-pressed', String(on && has));
-    $('#p-metro').disabled = !has;
+    $('#p-metro').classList.toggle('unavailable', !has);
     $('#p-beat').hidden = !(on && has);
-    $('#p-tap').textContent = has ? 'Tap' : 'Tap tempo';
-    $('#p-tap').classList.remove('done');
-    const hint = $('#p-tempo-hint');
-    if (!has) hint.textContent = 'No tempo found. Tap along with the beat to set one.';
-    else if (pct !== 100) hint.textContent = 'Song tempo ' + this.song.bpm + ' BPM, playing at ' + pct + '%';
-    else hint.textContent = '';
+    const note = $('#p-speed-note');
+    note.hidden = pct === 100;
+    note.textContent = 'Practising at ' + pct + '% of the real speed. Tap to reset.';
   },
   finished() {
     this.pause();
@@ -1554,7 +1452,17 @@ const player = {
       this.cur = curLine;
     }
     $('#p-progress').style.width = (this.tl.end ? clamp(this.t / this.tl.end, 0, 1) * 100 : 0) + '%';
-    $('#p-time').textContent = fmtTime(this.t) + ' / ' + fmtTime(this.tl.end);
+    $('#p-time').textContent = fmtTime(this.t);
+    $('#p-total').textContent = '-' + fmtTime(Math.max(0, this.tl.end - this.t) / (this.song.speed || 1));
+    // long intros: say when the first line is coming
+    const intro = $('#p-intro');
+    const firstAt = order.length && !this.timing && this.synced ? lines[order[0]].time : 0;
+    const wait = (firstAt - this.t) / (this.song.speed || 1);
+    if (firstAt > 4 && wait > 0.4 && !this.countIn) {
+      intro.hidden = false;
+      const bars = this.song.bpm ? Math.ceil(wait / ((60 / (this.song.bpm * (this.song.speed || 1))) * (this.song.beatsPerBar || 4))) : 0;
+      intro.textContent = 'Intro · first line in ' + Math.ceil(wait) + 's' + (bars ? ' (' + bars + (bars === 1 ? ' bar)' : ' bars)') : '');
+    } else intro.hidden = true;
 
     // auto-scroll (unless the user is scrolling by hand)
     const box = $('#p-lyrics');
@@ -1586,7 +1494,6 @@ const player = {
     this.t = 0;
     this.useTimeline(buildTimeline(plain, this.song));
     $('#p-timing').hidden = false;
-    $('#p-more-panel').hidden = true;
   },
   timingTap() {
     if (!this.timing) return;
@@ -1624,7 +1531,6 @@ const player = {
       this.pause();
       this.t = 0;
       let parsed = parseLyrics(this.song.lyrics);
-      if (settings.sections) parsed = guessSections(parsed);
       this.synced = parsed.synced;
       this.useTimeline(buildTimeline(parsed, this.song));
       this.updateUi();
@@ -1635,16 +1541,12 @@ const player = {
 /* player controls */
 $('#p-back').onclick = () => player.back();
 $('#p-play').onclick = () => player.toggle();
-$('#p-restart').onclick = () => player.restart();
-$('#p-more').onclick = () => { $('#p-more-panel').hidden = !$('#p-more-panel').hidden; requestAnimationFrame(() => player.layout()); };
 const changeFont = (d) => { settings.fontSize = clamp(settings.fontSize + d, 18, 56); saveSettings(); requestAnimationFrame(() => player.layout()); };
-$('#p-font-down').onclick = () => changeFont(-2);
-$('#p-font-up').onclick = () => changeFont(2);
-$('#p-chords-toggle').onclick = () => { settings.showChords = !settings.showChords; saveSettings(); $('#p-lyrics').classList.toggle('no-chords', !settings.showChords); player.layout(); };
 $('#p-edit').onclick = () => { if (player.song) location.hash = '#/edit/' + player.song.id; };
-$('#p-tap-time').onclick = () => player.startTiming();
+$('#p-speed-note').onclick = () => player.setSpeed(1);
+
 function toggleMetronome() {
-  if (!player.song.bpm) { toast('Tap along with the beat first to set a tempo'); return; }
+  if (!player.song.bpm) { openTempoSheet(); return; }
   settings.metroOn = !settings.metroOn;
   saveSettings();
   metro.ensure(); // unlock audio on this tap
@@ -1653,27 +1555,132 @@ function toggleMetronome() {
   player.updateUi();
 }
 $('#p-metro').onclick = toggleMetronome;
-const stepTempo = (dir) => {
-  if (player.song.bpm) player.setPlayingBpm(player.playingBpm() + dir);
-  else player.setSpeed((player.song.speed || 1) + dir * 0.05);
-};
-$('#p-down').onclick = () => stepTempo(-1);
-$('#p-up').onclick = () => stepTempo(1);
-const tempoInput = $('#p-tempo-input');
-const commitTempo = () => {
-  const n = parseFloat(tempoInput.value);
-  if (isFinite(n) && n > 0) {
-    if (player.song.bpm) player.setPlayingBpm(n);
-    else player.setSpeed(n / 100);
+$('#p-tempo-btn').onclick = () => openTempoSheet();
+
+/* Tap tempo: average the gaps between the last few taps. */
+function makeTapper(onBpm, onStep) {
+  let taps = [];
+  return () => {
+    const now = performance.now();
+    if (taps.length && now - taps[taps.length - 1] > 2000) taps = [];
+    taps.push(now);
+    taps = taps.slice(-8);
+    if (taps.length >= 4) {
+      const gaps = taps.slice(1).map((t, i) => t - taps[i]);
+      onBpm(Math.round(60000 / (gaps.reduce((x, y) => x + y, 0) / gaps.length)));
+    } else onStep(4 - taps.length);
+  };
+}
+const SIGS = { 2: '2/4', 3: '3/4', 4: '4/4', 5: '5/4', 6: '6/8', 7: '7/8' };
+function timeSig(bpb) { return SIGS[bpb || 4] || (bpb + '/4'); }
+
+/* The song's tempo: the main way to set it. Typing, nudging and tapping all set the song's real tempo. */
+function openTempoSheet() {
+  const song = player.song;
+  if (!song) return;
+  let bpm = song.bpm || null;
+  let bpb = song.beatsPerBar || 4;
+  const body = el('div', 'stack tempo-sheet');
+  body.appendChild(el('p', 'muted small', 'Set the tempo of the original recording. The count-in and click follow it, and practice speed is applied on top.'));
+  const big = el('div', 'big-stepper');
+  const down = iconBtn('minus', 'Slower');
+  const up = iconBtn('plus', 'Faster');
+  const input = el('input', 'big-bpm');
+  input.inputMode = 'numeric';
+  input.placeholder = '--';
+  input.setAttribute('aria-label', 'Beats per minute');
+  const unit = el('span', 'big-unit', 'BPM');
+  const mid = el('label', 'big-mid');
+  mid.append(input, unit);
+  big.append(down, mid, up);
+  body.appendChild(big);
+  const sync = () => { input.value = bpm || ''; };
+  sync();
+  const nudge = (d) => { bpm = clamp((bpm || 100) + d, 30, 300); sync(); };
+  down.onclick = () => nudge(-1);
+  up.onclick = () => nudge(1);
+  input.addEventListener('input', () => { const n = parseInt(input.value, 10); bpm = n >= 30 && n <= 300 ? n : null; pad.textContent = 'Tap here on the beat'; });
+  input.addEventListener('focus', () => input.select());
+  const pad = el('button', 'tap-pad', 'Tap here on the beat');
+  pad.type = 'button';
+  const tap = makeTapper((n) => { bpm = n; sync(); pad.textContent = n + ' BPM · keep tapping to refine'; }, (left) => { pad.textContent = 'Keep going… ' + left + ' more'; });
+  pad.onpointerdown = (e) => { e.preventDefault(); metro.ensure(); tap(); pad.classList.remove('hit'); void pad.offsetWidth; pad.classList.add('hit'); };
+  body.appendChild(pad);
+  body.appendChild(el('div', 'field-label', 'Time signature'));
+  const seg = el('div', 'segmented');
+  for (const [v, label] of Object.entries(SIGS)) {
+    const b = el('button', +v === bpb ? 'active' : '', label);
+    b.type = 'button';
+    b.onclick = () => { bpb = +v; seg.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b)); };
+    seg.appendChild(b);
   }
-  tempoInput.blur();
-  player.updateUi();
-};
-tempoInput.addEventListener('focus', () => tempoInput.select());
-tempoInput.addEventListener('change', commitTempo);
-tempoInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') commitTempo(); });
-$('#p-tap').onclick = () => { metro.ensure(); player.tapTempo(); };
-$('#p-next').onclick = () => player.goNext();
+  body.appendChild(seg);
+  if (song.bpm && song.bpmSource === 'deezer') body.appendChild(el('p', 'muted small', 'This tempo was found online. Worth checking against the recording.'));
+  openModal('Song tempo', body, [
+    { label: 'Cancel' },
+    { label: 'Save', primary: true, run: () => {
+      song.beatsPerBar = bpb;
+      if (bpm) player.setBpm(bpm, song.bpm === bpm && song.bpmSource ? song.bpmSource : 'manual');
+      else { upsertSong(song); player.updateUi(); }
+      if (bpm && !settings.metroOn) toast('Tempo saved. The speaker button turns the click on.');
+    } },
+  ]);
+}
+
+/* Everything else for playback lives in one sheet, so the toolbar stays simple. */
+function openPlaybackSheet() {
+  const song = player.song;
+  if (!song) return;
+  const body = el('div', 'stack');
+  // practice speed (deliberately tucked away: real speed is the default)
+  body.appendChild(el('div', 'field-label', 'Practice speed'));
+  const sp = el('div', 'row gap');
+  const minus = el('button', 'btn small', '−');
+  const val = el('output', 'strong speed-val');
+  const plus = el('button', 'btn small', '+');
+  const reset = el('button', 'btn small', 'Real speed');
+  const showSpeed = () => {
+    const pct = Math.round((song.speed || 1) * 100);
+    val.textContent = pct + '%' + (song.bpm ? ' · ' + player.playingBpm() + ' BPM' : '');
+    reset.disabled = pct === 100;
+  };
+  minus.onclick = () => { player.setSpeed((song.speed || 1) - 0.05); showSpeed(); };
+  plus.onclick = () => { player.setSpeed((song.speed || 1) + 0.05); showSpeed(); };
+  reset.onclick = () => { player.setSpeed(1); showSpeed(); };
+  sp.append(minus, val, plus, reset);
+  showSpeed();
+  body.appendChild(sp);
+  body.appendChild(el('div', 'muted small', 'Slows down or speeds up the lyrics, count-in and click together.'));
+  // intro
+  if (player.synced && player.introSkipTo() > 0) {
+    const lab = el('label', 'setting check');
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = !!song.skipIntro;
+    cb.onchange = () => { song.skipIntro = cb.checked; upsertSong(song); };
+    lab.append(cb, document.createTextNode('Skip the intro (start ' + (song.bpm ? 'a bar' : 'a few seconds') + ' before the first line)'));
+    body.appendChild(lab);
+  }
+  // display
+  body.appendChild(el('div', 'field-label', 'Display'));
+  const disp = el('div', 'sheet-links');
+  const mk = (label, fn, icon) => { const b = el('button', 'btn small'); b.type = 'button'; if (icon) b.appendChild(svgIcon(icon)); b.appendChild(document.createTextNode(label)); b.onclick = fn; disp.appendChild(b); return b; };
+  mk('Smaller text', () => changeFont(-2));
+  mk('Bigger text', () => changeFont(2));
+  if (player.hasChords) mk(settings.showChords ? 'Hide chords' : 'Show chords', () => { settings.showChords = !settings.showChords; saveSettings(); $('#p-lyrics').classList.toggle('no-chords', !settings.showChords); player.layout(); closeModal(); });
+  body.appendChild(disp);
+  body.appendChild(el('div', 'field-label', 'Song'));
+  const acts = el('div', 'sheet-links');
+  const mk2 = (label, icon, fn) => { const b = el('button', 'btn small'); b.type = 'button'; if (icon) b.appendChild(svgIcon(icon)); b.appendChild(document.createTextNode(label)); b.onclick = () => { closeModal(); fn(); }; acts.appendChild(b); };
+  mk2('Start again', 'restart', () => player.restart());
+  mk2('Tap to time', 'timer', () => player.startTiming());
+  if (player.nextSong()) mk2('Next in folder', 'next', () => player.goNext());
+  mk2('Edit song', 'edit', () => (location.hash = '#/edit/' + song.id));
+  body.appendChild(acts);
+  body.appendChild(el('div', 'muted small', player.synced ? 'Synced: lines follow the timings of the original recording.' : 'Paced: lines are spread across the song length. Use Tap to time for exact timings.'));
+  openModal('Playback', body);
+}
+$('#p-more').onclick = openPlaybackSheet;
 $('#t-next').onclick = () => player.timingTap();
 $('#t-cancel').onclick = () => player.stopTiming();
 window.addEventListener('resize', () => player.song && player.layout());

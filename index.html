@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400..700&display=swap">
-  <link rel="stylesheet" href="style.css?v=1.3.0">
+  <link rel="stylesheet" href="style.css?v=1.4.0">
 </head>
 <body>
   <!-- Icon set (inline SVG, no emoji) -->
@@ -42,6 +42,7 @@
       <symbol id="i-sort" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5v14M4 16l3 3 3-3M17 19V5M14 8l3-3 3 3"/></g></symbol>
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-metronome" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3.5h5l4 16.5h-13z"/><path d="M12 15l5-8"/><path d="M8 15h8"/></g></symbol>
+      <symbol id="i-click" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5h3l4.5-4v13L7 14.5H4z"/><path d="M15 9a4 4 0 010 6M17.8 6.5a7.5 7.5 0 010 11"/></g></symbol>
       <symbol id="i-person" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1.2-3.6 4-5.5 7-5.5s5.8 1.9 7 5.5"/></g></symbol>
     </defs>
   </svg>
@@ -141,13 +142,19 @@
       <label>Song length <span class="muted">(minutes:seconds, paces songs without timings)</span>
         <input id="edit-duration" class="input" placeholder="e.g. 3:45" inputmode="numeric" autocomplete="off">
       </label>
-      <div class="row gap">
-        <label class="grow">Tempo (BPM)
-          <input id="edit-bpm" class="input" placeholder="Looked up automatically" inputmode="numeric" autocomplete="off">
-        </label>
-        <label>Beats per bar
-          <select id="edit-bpb" class="input"><option>2</option><option>3</option><option selected>4</option><option>6</option></select>
-        </label>
+      <div class="tempo-edit">
+        <div class="field-label">Tempo</div>
+        <div class="row gap">
+          <input id="edit-bpm" class="input bpm-input" placeholder="BPM" inputmode="numeric" autocomplete="off" aria-label="Tempo in BPM">
+          <button type="button" class="btn grow" id="edit-tap">Tap on the beat</button>
+        </div>
+        <div class="row gap">
+          <span class="muted small grow" id="edit-bpm-note">Type it in or tap along with the recording.</span>
+          <select id="edit-bpb" class="input sig-select" aria-label="Time signature">
+            <option value="2">2/4</option><option value="3">3/4</option><option value="4" selected>4/4</option>
+            <option value="5">5/4</option><option value="6">6/8</option><option value="7">7/8</option>
+          </select>
+        </div>
       </div>
       <label>Lyrics
         <textarea id="edit-lyrics" class="input lyrics-input" spellcheck="false" placeholder="Paste lyrics here, one line per line.&#10;&#10;Optional chords go in square brackets before the word:&#10;[G]First line of my [D]song"></textarea>
@@ -186,7 +193,6 @@
       <label class="setting check"><input id="set-click" type="checkbox"> Play a click during the count-in</label>
       <label class="setting check"><input id="set-bpm" type="checkbox"> Look up song tempo online</label>
       <label class="setting check"><input id="set-chords" type="checkbox"> Show chords</label>
-      <label class="setting check"><input id="set-sections" type="checkbox"> Label verses and choruses (best guess)</label>
       <label class="setting check"><input id="set-wake" type="checkbox"> Keep screen awake while playing</label>
       <label class="setting check"><input id="set-motion" type="checkbox"> Moving background behind lyrics</label>
       <label class="setting check"><input id="set-covers" type="checkbox"> Look up cover art online</label>
@@ -221,39 +227,27 @@
         <button class="btn primary grow big" id="t-next">Next line</button>
       </div>
     </div>
+    <div id="p-intro" class="intro-pill" hidden></div>
     <footer class="controls">
-      <div class="progress"><div id="p-progress"></div></div>
-      <div class="row ctrl-meta">
-        <span id="p-time" class="muted small time">0:00</span>
-        <span id="p-mode" class="badge"></span>
+      <div class="scrub">
+        <span id="p-time" class="time">0:00</span>
+        <div class="progress"><div id="p-progress"></div></div>
+        <span id="p-total" class="time">0:00</span>
       </div>
-      <div class="tempo" id="p-tempo">
-        <button type="button" class="metro-toggle" id="p-metro" aria-pressed="false" aria-label="Metronome click"><svg><use href="#i-metronome"/></svg><i id="p-beat" class="beat-dot"></i></button>
-        <div class="stepper">
-          <button type="button" id="p-down" aria-label="Slower"><svg><use href="#i-minus"/></svg></button>
-          <label class="tempo-field"><input id="p-tempo-input" type="text" inputmode="numeric" enterkeyhint="done" autocomplete="off" aria-label="Tempo"><span id="p-tempo-unit">BPM</span></label>
-          <button type="button" id="p-up" aria-label="Faster"><svg><use href="#i-plus"/></svg></button>
+      <div class="dock">
+        <div class="dock-side">
+          <button type="button" class="tempo-pill" id="p-tempo-btn" aria-label="Song tempo">
+            <svg><use href="#i-metronome"/></svg>
+            <span class="tp-text"><b id="p-tempo-num">Add</b><small id="p-tempo-sub">tempo</small></span>
+          </button>
         </div>
-        <button type="button" class="tap-btn" id="p-tap">Tap</button>
-      </div>
-      <div class="tempo-hint" id="p-tempo-hint"></div>
-      <div class="row ctrl-row">
-        <button class="ctl" id="p-restart" aria-label="Restart"><svg><use href="#i-restart"/></svg></button>
         <button class="ctl play" id="p-play" aria-label="Play"><svg><use href="#i-play"/></svg></button>
-        <button class="ctl" id="p-more" aria-label="More"><svg><use href="#i-more"/></svg></button>
-      </div>
-      <div id="p-more-panel" class="more-panel" hidden>
-        <div class="row gap center">
-          <span class="muted small">Text</span>
-          <button class="btn small" id="p-font-down" aria-label="Smaller text">A&minus;</button>
-          <button class="btn small" id="p-font-up" aria-label="Bigger text">A+</button>
-          <button class="btn small" id="p-chords-toggle">Chords</button>
-        </div>
-        <div class="row gap center">
-          <button class="btn small" id="p-tap-time"><svg><use href="#i-timer"/></svg>Tap to time</button>
-          <button class="btn small" id="p-next" hidden><svg><use href="#i-next"/></svg>Next in folder</button>
+        <div class="dock-side end">
+          <button type="button" class="round-btn" id="p-metro" aria-pressed="false" aria-label="Metronome click"><svg><use href="#i-click"/></svg><i id="p-beat" class="beat-dot" hidden></i></button>
+          <button type="button" class="round-btn" id="p-more" aria-label="Playback options"><svg><use href="#i-more"/></svg></button>
         </div>
       </div>
+      <button type="button" id="p-speed-note" class="speed-note" hidden></button>
     </footer>
   </section>
 
@@ -291,6 +285,6 @@
       }, 1500);
     });
   </script>
-  <script src="app.js?v=1.3.0"></script>
+  <script src="app.js?v=1.4.0"></script>
 </body>
 </html>
