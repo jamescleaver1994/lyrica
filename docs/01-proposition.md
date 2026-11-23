@@ -1,5 +1,7 @@
 # 01 Proposition and principles
 
+This describes what Lyrica is meant to become. The current app (1.4.0) is an MVP and concept that tests this proposition. It isn't the finished product.
+
 ## The proposition
 
 **For** people who play guitar or piano and sing along, at home, at rehearsal or on stage,

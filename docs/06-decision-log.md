@@ -6,6 +6,7 @@ Format: **date, decision.** Why. *(Affects: doc)*
 
 ## November 2026
 
+- **2026-11-23, Today's app framed as an MVP and concept.** Only the palette and typefaces are deliberate design decisions. A proper design system is future work. Why: James considers the 1.4.0 build a simple MVP to test the idea. *(Affects: all, especially 04)*
 - **2026-11-23, Foundation docs created** in `docs/`, covering proposition, users, features, design, architecture and this log. *(Affects: all)*
 - **2026-11-23, Product principles adopted:** sync to real song time comes first, the user entering tempo is the primary path, and speed adjustment is hidden in extra settings with correct tempo as the default. Why: the app is for following lyrics hands-free while playing, and Deezer tempo data is too sparse to design around. *(Affects: 01, 03, 04)*
 - **2026-11-23, Auto-guessed verse and chorus headings removed** (built in 1.3, removed in 1.4). Why: guesses were inconsistent, especially on synced songs without pauses, and wrong labels are worse than none. *(Affects: 03)*

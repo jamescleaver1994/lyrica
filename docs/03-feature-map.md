@@ -2,7 +2,9 @@
 
 Status at version 1.4.0 (23 November 2026). Keep this in step with the live app.
 
-## Shipped
+The 1.4.0 app is an MVP and concept. "Shipped" means a working first version exists, not that the feature is designed or finished.
+
+## Shipped in the MVP
 
 ### Getting songs in
 - **LRCLIB search** by title and artist, with time-synced results marked. Free, no key, called from the phone.
@@ -46,6 +48,7 @@ These follow directly from the principles or from feedback so far. Confirm with 
 - **Foot pedal and keyboard control** (space to pause, arrows to skip). Many Bluetooth page-turner pedals act as keyboards, so this is cheap and fits "hands-free".
 - **Chord transpose and capo.**
 - **Landscape and tablet layout** for music stands.
+- **Develop a proper design system.** Only the palette and typefaces are decided so far (see [MVP design notes](04-design-system.md)).
 
 ## Future ideas
 

@@ -92,7 +92,7 @@ Each journey lists the steps and the principle that matters most at the critical
 
 ## User stories
 
-Grouped by journey. "Shipped" means live in version 1.4.0.
+Grouped by journey. "Shipped" means a first version is live in the 1.4.0 MVP. It may still need proper design and testing.
 
 | ID | As a... | I want to... | So that... | Status |
 | --- | --- | --- | --- | --- |

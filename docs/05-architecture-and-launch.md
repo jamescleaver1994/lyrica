@@ -1,6 +1,8 @@
 # 05 Architecture and path to launch
 
-## Today: a personal web app
+## Today: a personal web app (MVP)
+
+The current build is an MVP and concept, kept as simple as possible on purpose. It is the right setup for testing the idea and for personal use. It isn't meant to be the architecture of a public product.
 
 | Part | Choice | Why |
 | --- | --- | --- |

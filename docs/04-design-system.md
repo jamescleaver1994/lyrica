@@ -1,8 +1,22 @@
-# 04 Design principles and system
+# 04 MVP design notes
 
-The source of truth for values is `style.css` (`:root` tokens). This doc explains the intent behind them, so future changes stay consistent.
+**Status: current state, not a design system.** The app shipped in November 2026 is an MVP and concept. Apart from the Ocean Sunset palette and the two typefaces, which James chose on purpose, everything here describes choices made quickly while building the MVP. None of it has been designed, tested or signed off as a system. A proper design system is planned future work (see the end of this doc).
 
-## Design principles
+Use these notes to keep small changes consistent until then, and as raw material for the real design system. Values live in `style.css` (`:root` tokens).
+
+| Area | Status |
+| --- | --- |
+| Palette (Ocean Sunset) | Chosen by James |
+| Typefaces (Bricolage Grotesque, Hanken Grotesk) | Chosen by James |
+| Dark, off-black background | Chosen by James (concert context) |
+| No emojis, line icons | Chosen by James |
+| Grain and soft gradients | Chosen by James |
+| Working colour tokens, type scale, spacing, components, motion values, layout | MVP placeholders, to be designed |
+
+## Design principles (working draft)
+
+These came out of feedback during the MVP build. They should be reviewed when the design system is developed.
+
 
 1. **The current line is the hero.** At any moment one line is unmistakably "now". Everything else steps back: upcoming lines are dimmed, chrome is minimal, the toolbar is quiet.
 2. **Stage-dark by default.** An off-black, slightly teal background suits dark rooms and stages, saves battery on OLED screens, and doesn't blind the player. Light mode is not planned.
@@ -24,7 +38,7 @@ The source of truth for values is `style.css` (`:root` tokens). This doc explain
 | Baltic Blue | `#456990` | Glows and decorative gradients. Not for text (3.3:1). |
 | Bubblegum Pink | `#F45B69` | Primary accent: play button, primary actions, current-line glow (5.9:1). |
 
-### Working tokens
+### Working tokens (MVP, not designed)
 
 | Token | Value | Use | Contrast on `--bg` |
 | --- | --- | --- | --- |
@@ -47,6 +61,8 @@ The source of truth for values is `style.css` (`:root` tokens). This doc explain
 
 ## Typography
 
+The typefaces are chosen. The scale, weights and spacing below are MVP values only.
+
 | Family | Use | Notes |
 | --- | --- | --- |
 | **Bricolage Grotesque** | Brand, headings, buttons, tabs, numbers in the tempo sheet and count-in | Weights 400 to 800. Personality and display. |
@@ -64,7 +80,7 @@ Scale in use: brand 26, h1 20, h2 18, body 16, labels 14, small 13, badges 11. L
 - **Instrumental gaps:** three dots pulse on the current pause line.
 - All motion can be turned off in Settings, and is off when the system asks for reduced motion.
 
-## Layout and components
+## Layout and components (as built in the MVP)
 
 - **Tab bar:** four tabs (Library, Find, Practice, Settings), icon plus label, pill behind the active tab, frosted translucent background, 72 px plus the safe area. Hidden in the player.
 - **Player:** header with title and back. The lyric area has the current line anchored about 38% from the top. Bottom toolbar, top row: elapsed time, progress, remaining. Bottom row: tempo pill, large play button, click toggle, ⋯ for more.
@@ -79,6 +95,20 @@ Scale in use: brand 26, h1 20, h2 18, body 16, labels 14, small 13, badges 11. L
 - Talk about music the way players do: "tempo", "on the beat", "count-in", "first line in 20s".
 - Say what happens, not what the system did: "Tap along with the beat to set one", not "BPM not found".
 - No lyrics in examples, screenshots or docs. Use placeholder lines (also avoids copyright problems).
+
+## Future work: a proper design system
+
+To be developed in its own piece of work. Likely scope:
+
+- Design principles, reviewed and agreed
+- Colour roles and tokens built from the palette, with accessibility checked for every pairing, plus states (hover, pressed, disabled, focus)
+- Type scale, spacing scale, radii, elevation and grid
+- Icon set and illustration style
+- Motion principles and timings
+- A component library (buttons, inputs, sheets, tiles, tab bar, player toolbar, toasts, empty states) with usage guidance
+- Content and voice guidelines
+- Design tokens in a shareable format (for example JSON), so a future native or store build can use the same values
+- A Figma (or similar) library to match
 
 ## Open questions
 
