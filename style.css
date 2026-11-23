@@ -504,3 +504,21 @@ html.in-player .tabbar, .tabbar.hide { display: none; }
 .tempo-edit { display: flex; flex-direction: column; gap: 8px; padding: 14px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border); }
 .bpm-input { width: 96px; flex: none; font: 700 20px var(--font-display); text-align: center; }
 .sig-select { width: 96px; flex: none; }
+
+/* YouTube play-along */
+.video-card { display: flex; flex-direction: column; gap: 8px; padding: 0 16px 6px; }
+.vc-wrap { display: flex; justify-content: center; }
+/* YouTube asks for the player to stay visible and at least 200 x 200 px */
+.vc-frame { width: min(100%, 356px); min-width: 200px; height: 200px; border-radius: 14px; overflow: hidden; background: #000; border: 1px solid var(--border); }
+.vc-frame iframe { display: block; width: 100%; height: 100%; border: 0; }
+.vc-frame.preview { width: 100%; height: auto; aspect-ratio: 16 / 9; min-height: 200px; }
+.vc-msg { margin: 0; padding: 8px 12px; border-radius: 12px; color: var(--text); background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.vc-bar { display: flex; align-items: center; gap: 8px; max-width: 460px; width: 100%; margin: 0 auto; }
+.vc-switch { flex: 1; }
+.vc-switch button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 7px 4px; font-size: 13px; }
+.vc-switch button.add { color: var(--muted); }
+.vc-switch button svg { width: 14px; height: 14px; }
+.track-sheet a.btn { text-decoration: none; justify-content: center; }
+.track-status { margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); color: var(--muted); }
+.track-status.ok { color: var(--text); background: color-mix(in srgb, var(--chord) 10%, transparent); border-color: color-mix(in srgb, var(--chord) 40%, transparent); }
+.track-status.warn { color: var(--text); background: color-mix(in srgb, var(--accent) 14%, transparent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }

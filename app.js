@@ -4,7 +4,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.4.2';
+const APP_VERSION = '1.5.0';
 const LRCLIB = 'https://lrclib.net/api';
 const ITUNES = 'https://itunes.apple.com/search';
 const DEEZER = 'https://api.deezer.com';
@@ -72,6 +72,7 @@ function toast(msg) {
 
 /* Bottom sheet. body can be a string or a DOM node. */
 function openModal(title, body, actions = []) {
+  if (modalCleanup) { const fn = modalCleanup; modalCleanup = null; fn(); }
   $('#modal-title').textContent = title;
   const b = $('#modal-body');
   b.innerHTML = '';
@@ -86,7 +87,13 @@ function openModal(title, body, actions = []) {
   }
   $('#modal').hidden = false;
 }
-function closeModal() { $('#modal').hidden = true; }
+let modalCleanup = null; // run when the sheet closes (e.g. to stop a preview video)
+function closeModal() {
+  $('#modal').hidden = true;
+  const fn = modalCleanup;
+  modalCleanup = null;
+  if (fn) fn();
+}
 $('#modal-close').onclick = closeModal;
 $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
 
@@ -1185,6 +1192,193 @@ const metro = {
 /* ---------------- player ---------------- */
 const ANCHOR = 0.38; // where the current line sits, as a share of the lyric area height
 
+/* ---------------- YouTube: play along with the full song or a backing track ----------------
+ * Nothing is searched from inside the app (that needs a private key). Instead we open YouTube
+ * already searched, and the user pastes back the link of the video they pick.
+ * While a video plays, the lyrics follow the video's own clock. */
+const YT_KINDS = { full: 'Full song', backing: 'Backing track' };
+function ytId(text) {
+  const s = String(text || '').trim();
+  if (/^[\w-]{11}$/.test(s)) return s;
+  const m = s.match(/(?:youtu\.be\/|[?&]v=|\/(?:shorts|embed|live|v)\/)([\w-]{11})/);
+  return m ? m[1] : null;
+}
+function ytSearchUrl(song, kind) {
+  const q = [song.artist, song.title, kind === 'backing' ? 'backing track' : ''].filter(Boolean).join(' ');
+  return 'https://www.youtube.com/results?search_query=' + encodeURIComponent(q);
+}
+let ytApi = null;
+function loadYouTube() {
+  if (ytApi) return ytApi;
+  ytApi = new Promise((resolve, reject) => {
+    if (window.YT && window.YT.Player) { resolve(window.YT); return; }
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => { if (prev) prev(); resolve(window.YT); };
+    const sc = document.createElement('script');
+    sc.src = 'https://www.youtube.com/iframe_api';
+    sc.onerror = () => { ytApi = null; reject(new Error('blocked')); };
+    document.head.appendChild(sc);
+    setTimeout(() => { if (!(window.YT && window.YT.Player)) { ytApi = null; reject(new Error('timeout')); } }, 12000);
+  });
+  return ytApi;
+}
+/* Builds a player inside host. Resolves with the YT.Player once it is ready. */
+function makeYtPlayer(host, videoId, handlers = {}) {
+  return loadYouTube().then((YT) => new Promise((resolve) => {
+    host.innerHTML = '';
+    const div = document.createElement('div');
+    host.appendChild(div);
+    const vp = new YT.Player(div, {
+      videoId, width: '100%', height: '100%',
+      playerVars: { playsinline: 1, rel: 0, controls: 0, fs: 0, disablekb: 1, iv_load_policy: 3, origin: location.origin },
+      events: {
+        onReady: () => resolve(vp),
+        onStateChange: (e) => handlers.onState && handlers.onState(e.data),
+        onError: (e) => { if (handlers.onError) handlers.onError(e.data); resolve(vp); },
+      },
+    });
+  }));
+}
+function ytErrorText(code) {
+  if (code === 101 || code === 150) return 'The owner of this video doesn\'t allow it to play inside other apps. Try another one.';
+  if (code === 100 || code === 2) return 'That video can\'t be found. It may be private or removed.';
+  return 'This video won\'t play here. Try another one.';
+}
+/* Poll for a video's length (YouTube only knows it once the video's details have loaded). */
+function ytDuration(vp, ms = 5000) {
+  return new Promise((resolve) => {
+    const t0 = performance.now();
+    const tick = () => {
+      let d = 0;
+      try { d = vp.getDuration(); } catch { /* not ready */ }
+      if (d > 0) resolve(Math.round(d));
+      else if (performance.now() - t0 > ms) resolve(null);
+      else setTimeout(tick, 250);
+    };
+    tick();
+  });
+}
+
+/* Add (or replace) the full song or backing track for a song. */
+function openTrackSheet(song, kind) {
+  const body = el('div', 'stack track-sheet');
+  body.appendChild(el('p', 'muted small', kind === 'backing'
+    ? 'Pick a backing track that follows the original recording, so the lyrics stay in time. Copy its link (Share, then Copy link) and paste it below.'
+    : 'Pick the original studio recording. Copy its link (Share, then Copy link) and paste it below.'));
+  const find = el('a', 'btn');
+  find.href = ytSearchUrl(song, kind);
+  find.target = '_blank';
+  find.rel = 'noopener';
+  find.appendChild(svgIcon('search'));
+  find.appendChild(document.createTextNode('Search YouTube for ' + (kind === 'backing' ? 'a backing track' : 'the song')));
+  body.appendChild(find);
+  const row = el('div', 'row gap');
+  const input = el('input', 'input grow');
+  input.placeholder = 'Paste a YouTube link';
+  input.inputMode = 'url';
+  input.setAttribute('aria-label', 'YouTube link');
+  const paste = el('button', 'btn small', 'Paste');
+  paste.type = 'button';
+  row.append(input, paste);
+  body.appendChild(row);
+  const frame = el('div', 'vc-frame preview');
+  frame.hidden = true;
+  body.appendChild(frame);
+  const status = el('p', 'track-status small');
+  status.hidden = true;
+  body.appendChild(status);
+  const use = el('button', 'btn primary', 'Use this video');
+  use.type = 'button';
+  use.hidden = true;
+  body.appendChild(use);
+
+  let vp = null;
+  let checking = 0;
+  let found = null;
+  const say = (text, tone) => { status.hidden = !text; status.textContent = text || ''; status.className = 'track-status small' + (tone ? ' ' + tone : ''); };
+  const stopPreview = () => { if (vp) { try { vp.destroy(); } catch { /* gone */ } vp = null; } };
+  const check = async () => {
+    const id = ytId(input.value);
+    const run = ++checking;
+    use.hidden = true;
+    found = null;
+    if (!input.value.trim()) { say(''); frame.hidden = true; stopPreview(); return; }
+    if (!id) { say('That doesn\'t look like a YouTube link.', 'warn'); return; }
+    say('Checking the video…');
+    stopPreview();
+    frame.hidden = false;
+    let err = null;
+    try {
+      vp = await makeYtPlayer(frame, id, { onError: (c) => { err = c; if (run === checking) { say(ytErrorText(c), 'warn'); use.hidden = true; } } });
+    } catch {
+      if (run === checking) { frame.hidden = true; say('Can\'t reach YouTube right now. Check your connection and try again.', 'warn'); }
+      return;
+    }
+    if (run !== checking) return;
+    if (err) return;
+    const dur = await ytDuration(vp);
+    if (run !== checking || err) return;
+    let title = '';
+    try { title = (vp.getVideoData() || {}).title || ''; } catch { /* optional */ }
+    found = { id, dur, title };
+    const orig = song.duration;
+    use.hidden = false;
+    use.textContent = 'Use this video';
+    if (!dur) say('Couldn\'t read how long this video is, so it can\'t be checked against the original.', '');
+    else if (!orig) say('Length ' + fmtTime(dur) + '. Lyrica doesn\'t know how long the original is, so it can\'t compare them.', '');
+    else {
+      const diff = dur - orig;
+      if (Math.abs(diff) <= 5) say('Length ' + fmtTime(dur) + ', which matches the original (' + fmtTime(orig) + ').', 'ok');
+      else {
+        say('This runs ' + fmtTime(Math.abs(diff)) + (diff > 0 ? ' longer' : ' shorter') + ' than the original (' + fmtTime(orig) + '), so the lyrics will probably drift. Best to try another.', 'warn');
+        use.textContent = 'Use it anyway';
+      }
+    }
+  };
+  input.addEventListener('input', () => { clearTimeout(input._t); input._t = setTimeout(check, 300); });
+  paste.onclick = async () => {
+    try { input.value = await navigator.clipboard.readText(); check(); }
+    catch { input.focus(); toast('Press and hold the box, then choose Paste'); }
+  };
+  use.onclick = () => {
+    if (!found) return;
+    song.yt = Object.assign({}, song.yt, { [kind]: found });
+    song.ytUse = kind;
+    upsertSong(song);
+    closeModal();
+    if (player.song && player.song.id === song.id) player.mountVideo();
+    toast(YT_KINDS[kind] + ' added');
+  };
+  openModal(YT_KINDS[kind], body, [{ label: 'Cancel' }]);
+  modalCleanup = stopPreview;
+  const cur = song.yt && song.yt[kind];
+  if (cur) say('Replacing the current ' + YT_KINDS[kind].toLowerCase() + '.', '');
+}
+function removeTrack(song, kind) {
+  if (!song.yt || !song.yt[kind]) return;
+  const yt = Object.assign({}, song.yt);
+  delete yt[kind];
+  song.yt = yt;
+  if (song.ytUse === kind) song.ytUse = 'off';
+  upsertSong(song);
+  if (player.song && player.song.id === song.id) { player.mountVideo(); player.updateUi(); }
+  toast(YT_KINDS[kind] + ' removed');
+}
+function openTrackOptions(song) {
+  const kind = song.ytUse;
+  const tr = song.yt && song.yt[kind];
+  if (!tr) return;
+  const body = el('div', 'stack');
+  if (tr.title) body.appendChild(el('div', 'strong', tr.title));
+  body.appendChild(el('p', 'muted small', 'If this ' + YT_KINDS[kind].toLowerCase() + ' doesn\'t keep in time with the lyrics, try another or remove it.'));
+  const links = el('div', 'sheet-links');
+  const mk = (label, icon, fn) => { const b = el('button', 'btn small'); b.type = 'button'; b.appendChild(svgIcon(icon)); b.appendChild(document.createTextNode(label)); b.onclick = fn; links.appendChild(b); };
+  mk('Try another', 'search', () => openTrackSheet(song, kind));
+  mk('Remove', 'close', () => { closeModal(); removeTrack(song, kind); });
+  body.appendChild(links);
+  openModal(YT_KINDS[kind], body);
+}
+
 const player = {
   song: null,
   folderId: null,
@@ -1201,6 +1395,16 @@ const player = {
   playCounted: false,
   timing: null, // tap-to-time state
   raf: 0,
+  // YouTube video (full song or backing track)
+  vp: null,
+  vpId: null,
+  vpState: -1,
+  vpError: null,
+  vpFailed: false,
+  vpDur: 0,
+  vpAnchor: null,
+  vpLast: -1,
+  vpToken: 0,
 
   open(song, folderId) {
     this.song = song;
@@ -1220,6 +1424,7 @@ const player = {
     this.synced = parsed.synced;
     this.useTimeline(buildTimeline(parsed, song));
     wake.on();
+    this.mountVideo();
     this.tempoChanged();
     this.updateUi();
     this.lastFrame = performance.now();
@@ -1233,9 +1438,105 @@ const player = {
     this.creditPractice();
     this.pause();
     this.stopTiming(true);
+    this.unmountVideo();
     cancelAnimationFrame(this.raf);
     wake.off();
     this.song = null;
+  },
+
+  /* ----- YouTube video ----- */
+  track() { const s = this.song; return s && s.yt && s.ytUse && s.yt[s.ytUse] ? s.yt[s.ytUse] : null; },
+  // the lyrics follow the video only while one is loaded and working
+  usingVideo() { return !!(this.track() && this.vp && !this.vpError && !this.vpFailed && !this.timing); },
+  endT() { return this.usingVideo() && this.vpDur ? Math.max(this.vpDur, this.tl.end) : this.tl.end; },
+  mountVideo() {
+    const tr = this.track();
+    if (!tr) { this.unmountVideo(); this.renderVideoCard(); return; }
+    if (this.vp && this.vpId === tr.id && !this.vpError) { this.renderVideoCard(); return; }
+    this.unmountVideo();
+    if (this.playing) this.pause();
+    this.vpId = tr.id;
+    this.vpDur = tr.dur || 0;
+    const token = ++this.vpToken;
+    this.renderVideoCard();
+    if (navigator.onLine === false) { this.vpFailed = true; this.renderVideoCard(); return; }
+    makeYtPlayer($('#p-video-frame'), tr.id, {
+      onState: (st) => { if (token === this.vpToken) this.videoState(st); },
+      onError: (code) => { if (token !== this.vpToken) return; this.vpError = code; if (this.playing) this.pause(); this.renderVideoCard(); this.updateUi(); },
+    }).then((vp) => {
+      if (token !== this.vpToken) { try { vp.destroy(); } catch { /* gone */ } return; }
+      this.vp = vp;
+      ytDuration(vp, 8000).then((d) => { if (d && token === this.vpToken) this.vpDur = d; });
+      try { vp.setPlaybackRate(this.song.speed || 1); } catch { /* fine */ }
+      this.renderVideoCard();
+      this.updateUi();
+    }).catch(() => {
+      if (token !== this.vpToken) return;
+      this.vpFailed = true;
+      this.renderVideoCard();
+      this.updateUi();
+    });
+  },
+  unmountVideo() {
+    this.vpToken++;
+    if (this.vp) { try { this.vp.destroy(); } catch { /* gone */ } }
+    this.vp = null;
+    this.vpId = null;
+    this.vpState = -1;
+    this.vpError = null;
+    this.vpFailed = false;
+    this.vpAnchor = null;
+    this.vpLast = -1;
+    const f = $('#p-video-frame');
+    if (f) f.innerHTML = '';
+  },
+  /* YouTube's own state changes (including taps on the video itself) */
+  videoState(st) {
+    this.vpState = st;
+    if (st === 1 && !this.playing) { this.playing = true; this.manualUntil = 0; wake.on(); this.updateUi(); }
+    else if (st === 2 && this.playing) { this.playing = false; this.updateUi(); }
+    else if (st === 0 && this.playing) { this.t = this.endT(); this.finished(); }
+    if (st !== 1) this.vpAnchor = null;
+  },
+  videoTime() { try { return this.vp.getCurrentTime() || 0; } catch { return this.t; } },
+  videoSeek(t) {
+    this.vpAnchor = null;
+    // seeking a video that hasn't started yet would start it, so leave that for play()
+    if (this.vpState === 1 || this.vpState === 2 || this.vpState === 3) { try { this.vp.seekTo(t, true); } catch { /* fine */ } }
+  },
+  renderVideoCard() {
+    const card = $('#p-video');
+    const s = this.song;
+    const has = s && s.yt && (s.yt.full || s.yt.backing);
+    card.hidden = !has;
+    if (!has) { requestAnimationFrame(() => this.layout()); return; }
+    const tr = this.track();
+    const sw = $('#p-video-switch');
+    sw.innerHTML = '';
+    const opts = [['full', 'Full song'], ['backing', 'Backing'], ['off', 'No video']];
+    for (const [k, label] of opts) {
+      const b = el('button', (s.ytUse || 'off') === k || (k === 'off' && !tr) ? 'active' : '', label);
+      b.type = 'button';
+      if (k !== 'off' && !s.yt[k]) { b.classList.add('add'); b.prepend(svgIcon('plus')); b.setAttribute('aria-label', 'Add a ' + YT_KINDS[k].toLowerCase()); }
+      b.onclick = () => {
+        if (k !== 'off' && !s.yt[k]) { openTrackSheet(s, k); return; }
+        if (s.ytUse === k) return;
+        s.ytUse = k;
+        upsertSong(s);
+        this.mountVideo();
+        this.updateUi();
+      };
+      sw.appendChild(b);
+    }
+    $('#p-video-more').hidden = !tr;
+    $('#p-video-wrap').hidden = !tr;
+    const msg = $('#p-video-msg');
+    let text = '';
+    if (tr && this.vpError) text = ytErrorText(this.vpError) + ' The lyrics will run on their own timer.';
+    else if (tr && this.vpFailed) text = 'Can\'t reach YouTube, so the lyrics will run on their own timer.';
+    msg.hidden = !text;
+    msg.textContent = text;
+    requestAnimationFrame(() => this.layout());
   },
   creditPractice() {
     if (this.song && this.tl && this.maxT >= this.tl.end * 0.8) { markPracticed(this.song); this.maxT = 0; }
@@ -1266,8 +1567,12 @@ const player = {
   /* Padding so the first line starts at the anchor and you cannot scroll into empty space above it. */
   layout() {
     const box = $('#p-lyrics');
-    if (!this.nodes || !this.nodes.length || box.clientHeight === 0) return;
+    if (!this.nodes || !this.nodes.length) return;
+    // measure without the old padding, otherwise the box can't shrink when the video card appears
+    box.style.paddingTop = box.style.paddingBottom = '0px';
     const h = box.clientHeight;
+    if (h === 0) return;
+    $('#view-player').scrollTop = 0;
     const first = this.nodes[0].offsetHeight;
     box.style.paddingTop = Math.max(0, h * ANCHOR - first / 2) + 'px';
     box.style.paddingBottom = h * (1 - ANCHOR) + 'px';
@@ -1283,6 +1588,22 @@ const player = {
   },
   play() {
     if (this.playing) return;
+    if (this.usingVideo()) {
+      if (this.t >= this.endT() - 0.5) { this.t = 0; this.maxT = 0; }
+      if (this.t < 0.05 && this.song.skipIntro && this.synced) this.t = this.introSkipTo();
+      this.playing = true;
+      this.manualUntil = 0;
+      this.vpAnchor = null;
+      // the recording keeps time, so there is no count-in or click
+      try {
+        if (Math.abs(this.videoTime() - this.t) > 0.3) this.vp.seekTo(this.t, true);
+        this.vp.setPlaybackRate(this.song.speed || 1);
+        this.vp.playVideo();
+      } catch { /* the error handler reports it */ }
+      wake.on();
+      this.updateUi();
+      return;
+    }
     if (this.t >= this.tl.end - 0.1) { this.t = 0; this.maxT = 0; }
     this.playing = true;
     this.manualUntil = 0;
@@ -1298,6 +1619,7 @@ const player = {
   pause() {
     this.playing = false;
     this.countIn = null;
+    if (this.vp && (this.vpState === 1 || this.vpState === 3)) { try { this.vp.pauseVideo(); } catch { /* fine */ } }
     metro.stop();
     $('#p-countdown').hidden = true;
     this.updateUi();
@@ -1309,6 +1631,7 @@ const player = {
     this.manualUntil = 0;
     this.cur = -2;
     this.playCounted = false;
+    if (this.usingVideo()) this.videoSeek(0);
     if (this.playing) { this.pause(); this.play(); }
     this.updateUi();
   },
@@ -1317,12 +1640,14 @@ const player = {
     if (!l || l.time == null || this.timing) return;
     this.t = l.time;
     this.manualUntil = 0;
+    if (this.usingVideo()) this.videoSeek(l.time);
     this.updateUi();
   },
   setSpeed(v) {
     this.song.speed = Math.round(clamp(v, 0.5, 2) * 1000) / 1000;
     upsertSong(this.song);
     if (metro.running && this.song.bpm) metro.bpm = this.song.bpm * this.song.speed;
+    if (this.vp) { try { this.vp.setPlaybackRate(this.song.speed); } catch { /* fine */ } this.vpAnchor = null; }
     this.updateUi();
   },
   /* Start a bar (or 3 seconds) before the first sung line. */
@@ -1336,7 +1661,7 @@ const player = {
   /* Count-in: on the beat when the song has a tempo, otherwise a plain seconds countdown. */
   startCountIn() {
     const mode = String(settings.countIn);
-    if (mode === '0') return;
+    if (mode === '0' || this.usingVideo()) return;
     const bpb = this.song.beatsPerBar || 4;
     let beats, beatSec, accentEvery;
     if (/bar$/.test(mode) && this.song.bpm) {
@@ -1357,7 +1682,7 @@ const player = {
     }
   },
   startMetro(firstAt) {
-    if (!settings.metroOn || !this.song.bpm || this.timing) return;
+    if (!settings.metroOn || !this.song.bpm || this.timing || this.usingVideo()) return;
     metro.start(this.song.bpm * (this.song.speed || 1), this.song.beatsPerBar || 4, firstAt);
   },
   tempoChanged() {
@@ -1399,9 +1724,10 @@ const player = {
     $('#p-tempo-num').textContent = has ? String(this.playingBpm()) : 'Tap';
     $('#p-tempo-sub').textContent = !has ? 'to set tempo' : suggested ? 'Check tempo' : 'BPM · ' + timeSig(this.song.beatsPerBar);
     $('#p-tempo-btn').setAttribute('aria-label', !has ? 'Set the tempo by tapping' : suggested ? 'Suggested tempo, tap to check it' : 'Song tempo');
-    $('#p-metro').setAttribute('aria-pressed', String(on && has));
-    $('#p-metro').classList.toggle('unavailable', !has);
-    $('#p-beat').hidden = !(on && has);
+    const video = this.usingVideo();
+    $('#p-metro').setAttribute('aria-pressed', String(on && has && !video));
+    $('#p-metro').classList.toggle('unavailable', !has || video);
+    $('#p-beat').hidden = !(on && has && !video);
     const note = $('#p-speed-note');
     note.hidden = pct === 100;
     note.textContent = 'Practising at ' + pct + '% of the real speed. Tap to reset.';
@@ -1448,7 +1774,22 @@ const player = {
         this.startMetro(ci.audioEnd || 0);
       }
     }
-    if (this.playing && !this.countIn) {
+    if (this.playing && this.usingVideo()) {
+      // follow the video's clock, smoothed between YouTube's time updates
+      const vt = this.videoTime();
+      let rate = this.song.speed || 1;
+      try { rate = this.vp.getPlaybackRate() || rate; } catch { /* fine */ }
+      if (vt !== this.vpLast || !this.vpAnchor) { this.vpLast = vt; this.vpAnchor = { t: vt, at: ts }; }
+      const t = this.vpState === 1 ? this.vpAnchor.t + ((ts - this.vpAnchor.at) / 1000) * rate : vt;
+      // ignore tiny backward wobbles; real seeks are bigger than this
+      if (!(t < this.t && this.t - t < 0.25)) this.t = t;
+      this.maxT = Math.max(this.maxT, this.t);
+      if (!this.playCounted && this.maxT >= this.tl.end * 0.5) {
+        this.playCounted = true;
+        this.song.plays = (this.song.plays || 0) + 1;
+        upsertSong(this.song);
+      }
+    } else if (this.playing && !this.countIn) {
       this.t += dt * (this.timing ? 1 : this.song.speed || 1);
       this.maxT = Math.max(this.maxT, this.t);
       if (!this.timing && !this.playCounted && this.maxT >= this.tl.end * 0.5) {
@@ -1482,9 +1823,10 @@ const player = {
       });
       this.cur = curLine;
     }
-    $('#p-progress').style.width = (this.tl.end ? clamp(this.t / this.tl.end, 0, 1) * 100 : 0) + '%';
+    const end = this.endT();
+    $('#p-progress').style.width = (end ? clamp(this.t / end, 0, 1) * 100 : 0) + '%';
     $('#p-time').textContent = fmtTime(this.t);
-    $('#p-total').textContent = '-' + fmtTime(Math.max(0, this.tl.end - this.t) / (this.song.speed || 1));
+    $('#p-total').textContent = '-' + fmtTime(Math.max(0, end - this.t) / (this.song.speed || 1));
     // long intros: say when the first line is coming
     const intro = $('#p-intro');
     const firstAt = order.length && !this.timing && this.synced ? lines[order[0]].time : 0;
@@ -1520,8 +1862,9 @@ const player = {
     const parsed = parseLyrics(this.song.lyrics);
     // time against the plain layout so every lyric line is stamped once, in order
     const plain = { synced: false, lines: parsed.lines.filter((l) => l.kind !== 'pause').map((l) => Object.assign({}, l, { time: null })) };
-    this.timing = { next: 0, stamps: [] };
     this.pause();
+    this.timing = { next: 0, stamps: [] };
+    this.updateUi();
     this.t = 0;
     this.useTimeline(buildTimeline(plain, this.song));
     $('#p-timing').hidden = false;
@@ -1578,6 +1921,7 @@ $('#p-speed-note').onclick = () => player.setSpeed(1);
 
 function toggleMetronome() {
   if (!player.song.bpm) { openTempoSheet(); return; }
+  if (player.usingVideo()) { toast('The click is off while a YouTube track plays. The recording keeps time.'); return; }
   settings.metroOn = !settings.metroOn;
   saveSettings();
   metro.ensure(); // unlock audio on this tap
@@ -1729,6 +2073,26 @@ function openPlaybackSheet() {
   const song = player.song;
   if (!song) return;
   const body = el('div', 'stack');
+  // play along with YouTube
+  body.appendChild(el('div', 'field-label', 'Play along with YouTube'));
+  const ytRow = el('div', 'sheet-links');
+  for (const k of ['full', 'backing']) {
+    const has = song.yt && song.yt[k];
+    const b = el('button', 'btn small');
+    b.type = 'button';
+    b.appendChild(svgIcon(has ? 'check' : 'plus'));
+    b.appendChild(document.createTextNode(has ? YT_KINDS[k] + ' added' : 'Add ' + YT_KINDS[k].toLowerCase()));
+    b.onclick = () => {
+      if (!has) { openTrackSheet(song, k); return; }
+      closeModal();
+      song.ytUse = k;
+      upsertSong(song);
+      player.mountVideo();
+      player.updateUi();
+    };
+    ytRow.appendChild(b);
+  }
+  body.appendChild(ytRow);
   // practice speed (deliberately tucked away: real speed is the default)
   body.appendChild(el('div', 'field-label', 'Practice speed'));
   const sp = el('div', 'row gap');
@@ -1778,6 +2142,7 @@ function openPlaybackSheet() {
   openModal('Playback', body);
 }
 $('#p-more').onclick = openPlaybackSheet;
+$('#p-video-more').onclick = () => { if (player.song) openTrackOptions(player.song); };
 $('#t-next').onclick = () => player.timingTap();
 $('#t-cancel').onclick = () => player.stopTiming();
 window.addEventListener('resize', () => player.song && player.layout());

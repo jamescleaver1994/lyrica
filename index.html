@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400..700&display=swap">
-  <link rel="stylesheet" href="style.css?v=1.4.2">
+  <link rel="stylesheet" href="style.css?v=1.5.0">
 </head>
 <body>
   <!-- Icon set (inline SVG, no emoji) -->
@@ -217,6 +217,16 @@
       <div class="titles"><div id="p-title" class="p-title"></div><div id="p-artist" class="muted small"></div></div>
       <button class="icon-btn" id="p-edit" aria-label="Edit song"><svg><use href="#i-edit"/></svg></button>
     </header>
+    <div id="p-video" class="video-card" hidden>
+      <div id="p-video-wrap" class="vc-wrap">
+        <div id="p-video-frame" class="vc-frame"></div>
+      </div>
+      <p id="p-video-msg" class="vc-msg small" hidden></p>
+      <div class="vc-bar">
+        <div id="p-video-switch" class="segmented vc-switch" role="group" aria-label="Play along with"></div>
+        <button type="button" class="icon-btn" id="p-video-more" aria-label="Track options"><svg><use href="#i-more"/></svg></button>
+      </div>
+    </div>
     <div id="p-lyrics" class="p-lyrics" tabindex="0"></div>
     <div id="p-countdown" class="countdown" hidden></div>
     <div id="p-manual" class="manual-pill" hidden>Scrolling by hand, carrying on in a moment</div>
@@ -285,6 +295,6 @@
       }, 1500);
     });
   </script>
-  <script src="app.js?v=1.4.2"></script>
+  <script src="app.js?v=1.5.0"></script>
 </body>
 </html>
