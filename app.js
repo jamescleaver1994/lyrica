@@ -4,7 +4,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.8.0';
 const LRCLIB = 'https://lrclib.net/api';
 const ITUNES = 'https://itunes.apple.com/search';
 const DEEZER = 'https://api.deezer.com';
@@ -1048,6 +1048,41 @@ $('#edit-save').onclick = () => {
 };
 
 /* ---------------- settings ---------------- */
+/* Segmented pickers: a <select data-seg="A|B|C"> becomes a row of chunky pill options.
+ * The select stays in the page (hidden) and still fires 'change', so nothing else needs to know. */
+function makePicker(select) {
+  const labels = select.dataset.seg.split('|');
+  const seg = el('div', 'segmented picker-seg');
+  seg.setAttribute('role', 'radiogroup');
+  const lab = select.getAttribute('aria-labelledby');
+  if (lab) seg.setAttribute('aria-labelledby', lab);
+  [...select.options].forEach((o, i) => {
+    const b = el('button', null, labels[i] || o.textContent);
+    b.type = 'button';
+    b.setAttribute('role', 'radio');
+    b.dataset.v = o.value;
+    b.onclick = () => {
+      if (select.value === o.value) return;
+      select.value = o.value;
+      select.dispatchEvent(new Event('change'));
+      syncPicker(select);
+    };
+    seg.appendChild(b);
+  });
+  select.hidden = true;
+  select.after(seg);
+  select._seg = seg;
+}
+function syncPicker(select) {
+  if (!select._seg) return;
+  for (const b of select._seg.children) {
+    const on = b.dataset.v === select.value;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-checked', String(on));
+  }
+}
+function syncPickers() { document.querySelectorAll('select[data-seg]').forEach(syncPicker); }
+document.querySelectorAll('select[data-seg]').forEach(makePicker);
 function openSettings() {
   $('#set-font').value = settings.fontSize;
   $('#set-font-out').textContent = settings.fontSize;
@@ -1060,6 +1095,7 @@ function openSettings() {
   $('#set-wake').checked = settings.keepAwake;
   $('#set-motion').checked = settings.motion;
   $('#set-covers').checked = settings.covers;
+  syncPickers();
   $('#app-version').textContent = 'Version ' + APP_VERSION + ' · ' + songs.length + ' songs · ' + folders.length + ' folders';
   show('settings');
 }
@@ -2495,19 +2531,19 @@ function openPlaybackSheet() {
   if (player.synced && player.introSkipTo() > 0) {
     const lab = el('label', 'setting check');
     const cb = el('input');
-    cb.type = 'checkbox';
+    cb.type = 'checkbox'; cb.setAttribute('role', 'switch');
     cb.checked = !!song.skipIntro;
     cb.onchange = () => { song.skipIntro = cb.checked; upsertSong(song); };
-    lab.append(cb, document.createTextNode('Skip the intro (start ' + (song.bpm ? 'a bar' : 'a few seconds') + ' before the first line)'));
+    lab.append(cb, el('span', null, 'Skip the intro'));
     body.appendChild(lab);
   }
   if (player.gaps.some((g) => !g.intro)) {
     const lab = el('label', 'setting check');
     const cb = el('input');
-    cb.type = 'checkbox';
+    cb.type = 'checkbox'; cb.setAttribute('role', 'switch');
     cb.checked = !!settings.pauseGaps;
     cb.onchange = () => { settings.pauseGaps = cb.checked; saveSettings(); };
-    lab.append(cb, document.createTextNode('Pause at instrumentals, then count me back in'));
+    lab.append(cb, el('span', null, 'Pause at instrumentals'));
     body.appendChild(lab);
   }
   // display
