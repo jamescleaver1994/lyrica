@@ -4,7 +4,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.6.1';
+const APP_VERSION = '1.7.0';
 const LRCLIB = 'https://lrclib.net/api';
 const ITUNES = 'https://itunes.apple.com/search';
 const DEEZER = 'https://api.deezer.com';
@@ -1216,7 +1216,7 @@ const metro = {
 };
 
 /* ---------------- player ---------------- */
-const ANCHOR = 0.38; // where the current line sits, as a share of the lyric area height
+const ANCHOR = 0.3; // where the current line sits, as a share of the lyric area height
 
 /* ---------------- YouTube: play along with the full song or a backing track ----------------
  * Nothing is searched from inside the app (that needs a private key). Instead we open YouTube
@@ -1593,10 +1593,10 @@ const player = {
     this.gaps = this.song ? findGaps(tl, this.song, this.synced && !this.timing) : [];
     this.cur = -2;
     this.hasChords = tl.lines.some((l) => l.hasChords);
-    this.layout();
+    this.buildGapCards();
     box.scrollTop = 0;
   },
-  /* Padding so the first line starts at the anchor and you cannot scroll into empty space above it. */
+  /* The song starts at the top of the screen (no empty space above it). Padding below lets the last line reach the anchor. */
   layout() {
     const box = $('#p-lyrics');
     if (!this.nodes || !this.nodes.length) return;
@@ -1605,8 +1605,7 @@ const player = {
     const h = box.clientHeight;
     if (h === 0) return;
     $('#view-player').scrollTop = 0;
-    const first = this.nodes[0].offsetHeight;
-    box.style.paddingTop = Math.max(0, h * ANCHOR - first / 2) + 'px';
+    box.style.paddingTop = '14px';
     box.style.paddingBottom = h * (1 - ANCHOR) + 'px';
   },
   currentIndex(t) {
@@ -1660,7 +1659,7 @@ const player = {
     this.countIn = null;
     if (this.vp && (this.vpState === 1 || this.vpState === 3)) { try { this.vp.pauseVideo(); } catch { /* fine */ } }
     metro.stop();
-    $('#p-countdown').hidden = true;
+    paintRing(-1);
     this.updateUi();
   },
   toggle() { this.playing ? this.pause() : this.play(); },
@@ -1728,7 +1727,7 @@ const player = {
   },
   tempoChanged() {
     const bpm = this.song && this.song.bpm;
-    if (this.song && this.tl) this.gaps = findGaps(this.tl, this.song, this.synced && !this.timing);
+    if (this.song && this.tl) { this.gaps = findGaps(this.tl, this.song, this.synced && !this.timing); this.buildGapCards(); }
     // the background glow breathes once every two bars when the tempo is known
     $('#view-player').style.setProperty('--breathe', bpm ? clamp((60 / bpm) * 8, 4, 14).toFixed(2) + 's' : '9s');
     if (metro.running && bpm) metro.bpm = bpm * (this.song.speed || 1);
@@ -1797,23 +1796,15 @@ const player = {
     if (!this.song) return;
     const dt = Math.min(0.25, (ts - this.lastFrame) / 1000);
     this.lastFrame = ts;
-    const cd = $('#p-countdown');
     const ci = this.countIn;
     if (this.playing && ci) {
       const idx = Math.floor((ts - ci.start) / ci.beatMs);
       if (idx < ci.beats) {
-        const left = ci.beats - Math.max(0, idx);
-        if (left !== ci.shown) {
-          ci.shown = left;
-          cd.hidden = false;
-          cd.textContent = left;
-          cd.classList.remove('beat');
-          void cd.offsetWidth; // restart the pop animation on every beat
-          cd.classList.add('beat');
-        }
+        // the count-in runs round the play button, one segment per beat
+        if (idx !== ci.shown) { ci.shown = idx; paintRing(Math.max(0, idx), ci.beats); }
       } else {
         this.countIn = null;
-        cd.hidden = true;
+        paintRing(-1);
         this.lastFrame = ts;
         this.beatFrom = this.t;
         this.startMetro(ci.audioEnd || 0);
@@ -1897,50 +1888,124 @@ const player = {
     const on = beat % bpb;
     [...box.children].forEach((d, i) => d.classList.toggle('on', i === on));
   },
-  /* Instrumental card: how long the gap is, bar by bar, and "back in 4, 3, 2, 1" at the end. */
-  paintGap(gap) {
-    const card = $('#p-intro');
-    if (!gap || this.countIn) { card.hidden = true; this.gapShown = null; return; }
-    const speed = this.song.speed || 1;
-    const bpm = this.song.bpm;
-    const bpb = this.song.beatsPerBar || 4;
-    const barSec = bpm ? (60 / bpm) * bpb : 0;
-    const len = gap.end - gap.start;
-    const bars = barSec ? Math.max(1, Math.round(len / barSec)) : 0;
-    if (this.gapShown !== gap) {
-      this.gapShown = gap;
-      card.innerHTML = '';
+  /* Instrumental and intro cards sit in the lyric column, between the lines they separate.
+   * Each shows how long the gap is, bar by bar, and "Back in 4, 3, 2, 1" at the end. */
+  buildGapCards() {
+    const box = $('#p-lyrics');
+    if (!box || !this.nodes) return;
+    box.querySelectorAll('.gap-inline').forEach((n) => n.remove());
+    const bpm = this.song && this.song.bpm;
+    const barSec = bpm ? (60 / bpm) * (this.song.beatsPerBar || 4) : 0;
+    for (const g of this.gaps) {
+      const len = g.end - g.start;
+      const bars = barSec ? Math.max(1, Math.round(len / barSec)) : 0;
+      const card = el('div', 'gap-card gap-inline');
+      card.dataset.t = g.intro ? 0 : g.start;
       const head = el('div', 'gc-head');
-      head.append(el('span', 'gc-title', gap.intro ? 'Intro' : 'Instrumental'), el('span', 'gc-sub'));
+      const ic = el('span', 'gc-ic');
+      ic.appendChild(svgIcon('note'));
+      head.append(ic, el('span', 'gc-title', g.intro ? 'Intro' : 'Instrumental'), el('span', 'gc-sub'));
       const track = el('div', 'gc-bars');
       const segs = bars && bars <= 16 ? bars : 1;
       for (let i = 0; i < segs; i++) track.appendChild(el('i', null)).appendChild(el('b'));
       card.append(head, track, el('div', 'gc-count'));
+      card.setAttribute('role', 'button');
+      card.setAttribute('aria-label', (g.intro ? 'Intro' : 'Instrumental') + ', jump here');
+      const before = this.nodes[g.next];
+      box.insertBefore(card, before || null);
+      g.card = card;
+      g.bars = bars;
+      g.barSec = barSec;
+      g.state = '';
     }
-    card.hidden = false;
-    card.classList.toggle('held', !!this.gapHold);
-    const left = Math.max(0, gap.end - this.t); // song seconds until the next line
-    const sub = card.querySelector('.gc-sub');
-    const count = card.querySelector('.gc-count');
-    if (this.gapHold) {
-      sub.textContent = bars ? bars + (bars === 1 ? ' bar' : ' bars') : Math.round(len / speed) + 's';
-      count.textContent = 'Paused. Press play to come back in with a count-in.';
-      count.classList.remove('go');
-    } else {
-      const barsLeft = barSec ? Math.ceil(left / barSec - 0.001) : 0;
-      sub.textContent = bars ? barsLeft + ' of ' + bars + (bars === 1 ? ' bar' : ' bars') + ' left' : Math.ceil(left / speed) + 's left';
-      // the last bar (or last 4 seconds without a tempo) counts you back in
-      const beatSec = bpm ? 60 / bpm : 1;
-      const beatsLeft = Math.ceil(left / beatSec - 0.001);
-      const inLast = bpm ? beatsLeft <= bpb : left / speed <= 4;
-      count.textContent = inLast && beatsLeft > 0 ? 'Back in ' + beatsLeft : gap.intro ? 'First line coming up' : '';
-      count.classList.toggle('go', inLast);
+    // waypoints for the scroll: every timed line, plus each card at the start of its gap
+    const ways = this.tl.order.map((i) => ({ t: this.tl.lines[i].time, node: this.nodes[i] }));
+    for (const g of this.gaps) ways.push({ t: g.intro ? 0 : g.start, node: g.card, card: true });
+    ways.sort((x, y) => x.t - y.t || (x.card ? -1 : 1));
+    this.ways = ways;
+    this.layout();
+    if (typeof cord !== 'undefined') cord.build();
+  },
+  paintGap(active) {
+    const speed = this.song.speed || 1;
+    const bpm = this.song.bpm;
+    const bpb = this.song.beatsPerBar || 4;
+    for (const g of this.gaps) {
+      if (!g.card) continue;
+      const card = g.card;
+      const sub = card.querySelector('.gc-sub');
+      const count = card.querySelector('.gc-count');
+      const segsEls = card.querySelectorAll('.gc-bars i b');
+      const len = g.end - g.start;
+      const lenText = g.bars ? g.bars + (g.bars === 1 ? ' bar' : ' bars') : Math.round(len / speed) + 's';
+      if (g !== active) {
+        const state = this.t >= g.end ? 'past' : 'future';
+        if (g.state === state) continue;
+        g.state = state;
+        card.classList.remove('now', 'held');
+        sub.textContent = lenText;
+        count.textContent = '';
+        count.classList.remove('go');
+        segsEls.forEach((b) => { b.style.transform = 'scaleX(' + (state === 'past' ? 1 : 0) + ')'; });
+        continue;
+      }
+      g.state = 'now';
+      card.classList.add('now');
+      card.classList.toggle('held', !!this.gapHold);
+      const left = Math.max(0, g.end - this.t); // song seconds until the next line
+      if (this.gapHold) {
+        sub.textContent = lenText;
+        count.textContent = 'Paused. Press play to come back in with a count-in.';
+        count.classList.remove('go');
+      } else {
+        const barsLeft = g.barSec ? Math.min(g.bars, Math.ceil(left / g.barSec - 0.001)) : 0;
+        sub.textContent = g.bars ? barsLeft + ' of ' + lenText + ' left' : Math.ceil(left / speed) + 's left';
+        // the last bar (or last 4 seconds without a tempo) counts you back in
+        const beatSec = bpm ? 60 / bpm : 1;
+        const beatsLeft = Math.ceil(left / beatSec - 0.001);
+        const inLast = bpm ? beatsLeft <= bpb : left / speed <= 4;
+        count.textContent = inLast && beatsLeft > 0 ? 'Back in ' + beatsLeft : '';
+        count.classList.toggle('go', inLast);
+      }
+      const done = clamp((this.t - g.start) / len, 0, 1);
+      const n = segsEls.length;
+      segsEls.forEach((b, i) => { b.style.transform = 'scaleX(' + clamp(done * n - i, 0, 1) + ')'; });
     }
-    // fill the bar segments
-    const segsEls = card.querySelectorAll('.gc-bars i b');
-    const done = clamp((this.t - gap.start) / len, 0, 1);
-    const n = segsEls.length;
-    segsEls.forEach((b, i) => { b.style.transform = 'scaleX(' + clamp(done * n - i, 0, 1) + ')'; });
+  },
+  /* Jump anywhere: the cord, its clues and the cards all come through here. */
+  seek(t, live) {
+    if (this.timing || !this.tl) return;
+    this.t = clamp(t, 0, this.endT());
+    this.manualUntil = 0;
+    this.touching = false;
+    this.gapHold = null;
+    // landing on an instrumental shouldn't immediately pause there
+    this.gapDone = this.gaps.find((g) => !g.intro && this.t >= g.start - 0.05 && this.t < g.start + 1.5) || null;
+    if (!live && this.usingVideo()) this.videoSeek(this.t);
+    if (this.playing && !this.countIn) this.beatFrom = this.t;
+  },
+  /* Your own knots on the cord, saved with the song. */
+  tieKnot(t, label) {
+    const s = this.song;
+    s.knots = (s.knots || []).filter((k) => Math.abs(k.t - t) > 1);
+    s.knots.push({ t: Math.round(t * 10) / 10, label });
+    s.knots.sort((x, y) => x.t - y.t);
+    upsertSong(s);
+    cord.build();
+  },
+  untieKnots() {
+    delete this.song.knots;
+    upsertSong(this.song);
+    cord.build();
+  },
+  /* What's happening at a given moment, in a few words (for the cord's bubble and the tie sheet). */
+  describe(t) {
+    const g = this.gaps.find((x) => t >= x.start && t < x.end);
+    if (g) return g.intro ? 'Intro' : 'Instrumental';
+    const pos = this.currentIndex(t);
+    if (pos < 0) return 'Before the first line';
+    const l = this.tl.lines[this.tl.order[pos]];
+    return l.kind === 'pause' ? 'Break' : (l.src || '').replace(/\[[^\]]*\]/g, '').replace(/\s+/g, ' ').trim();
   },
   paint(dt, now) {
     const lines = this.tl.lines;
@@ -1966,28 +2031,45 @@ const player = {
     const gap = this.timing ? null : this.gaps.find((g) => this.t >= g.start && this.t < g.end) || null;
     this.paintBand(pos, frac, gap);
     const end = this.endT();
-    $('#p-progress').style.width = (end ? clamp(this.t / end, 0, 1) * 100 : 0) + '%';
+    cord.paint(this.t, end);
     $('#p-time').textContent = fmtTime(this.t);
     $('#p-total').textContent = '-' + fmtTime(Math.max(0, end - this.t) / (this.song.speed || 1));
-    this.paintGap(this.gapHold || gap);
+    this.paintGap(this.timing ? null : this.gapHold || gap);
     this.paintDots();
 
     // auto-scroll (unless the user is scrolling by hand)
     const box = $('#p-lyrics');
-    const manual = this.touching || now < this.manualUntil;
-    $('#p-manual').hidden = !(manual && this.playing);
-    if (manual || !this.nodes.length) return;
-    const center = (idx) => { const n = this.nodes[idx]; return n.offsetTop + n.offsetHeight / 2; };
+    if (!this.nodes.length) return;
+    const center = (n) => n.offsetTop + n.offsetHeight / 2;
     let target;
-    if (curLine < 0) target = order.length ? center(order[0]) : center(0);
+    const ways = this.timing ? null : this.ways;
+    if (this.timing) target = center(this.nodes[curLine >= 0 ? curLine : order.length ? order[0] : 0]);
+    else if (!ways || !ways.length) target = center(this.nodes[0]);
     else {
-      const nextLine = pos + 1 < order.length ? order[pos + 1] : curLine;
-      // ease the scroll so it moves mostly in the second half of each line
-      const e = frac < 0.35 ? 0 : (frac - 0.35) / 0.65;
-      const eased = e * e * (3 - 2 * e);
-      target = center(curLine) + (center(nextLine) - center(curLine)) * eased;
+      // glide from one line (or card) to the next over the last couple of seconds before it, never in steps
+      let k = -1;
+      for (let j = 0; j < ways.length; j++) { if (ways[j].t <= this.t + 0.05) k = j; else break; }
+      if (k < 0) target = center(ways[0].node);
+      else {
+        const a = ways[k], b = ways[k + 1];
+        if (!b) target = center(a.node);
+        else {
+          const from = Math.max(a.t + (b.t - a.t) * 0.35, b.t - 2.5);
+          const e = clamp((this.t - from) / Math.max(0.001, b.t - from), 0, 1);
+          target = center(a.node) + (center(b.node) - center(a.node)) * e * e * (3 - 2 * e);
+        }
+      }
     }
-    target -= box.clientHeight * ANCHOR;
+    target = Math.max(0, target - box.clientHeight * ANCHOR);
+    const manual = this.touching || now < this.manualUntil;
+    const away = Math.abs(target - box.scrollTop) > 60;
+    const back = $('#p-backnow');
+    back.hidden = !(manual && away);
+    if (!back.hidden) {
+      back.querySelector('use').setAttribute('href', target < box.scrollTop ? '#i-up' : '#i-down');
+      $('#p-backnow-text').textContent = this.playing ? 'Back to now' : 'Back to ' + fmtTime(this.t);
+    }
+    if (manual) return;
     const diff = target - box.scrollTop;
     if (Math.abs(diff) > 0.5) box.scrollTop += diff * Math.min(1, dt * 6);
   },
@@ -2046,6 +2128,167 @@ const player = {
     }
   },
 };
+
+/* ---------------- count-in ring: one segment per beat, round the play button ---------------- */
+function paintRing(on, beats) {
+  const ring = $('#p-ring');
+  if (!ring) return;
+  if (on < 0) { ring.classList.remove('live'); return; }
+  if (ring.childElementCount !== beats) {
+    const cx = 46, cy = 46, r = 42, gap = beats > 6 ? 0.22 : 0.32;
+    const step = (Math.PI * 2) / beats;
+    let h = '';
+    for (let k = 0; k < beats; k++) {
+      const a0 = -Math.PI / 2 + k * step + gap / 2, a1 = a0 + step - gap;
+      h += '<path d="M' + (cx + r * Math.cos(a0)).toFixed(2) + ' ' + (cy + r * Math.sin(a0)).toFixed(2) + ' A' + r + ' ' + r + ' 0 0 1 ' + (cx + r * Math.cos(a1)).toFixed(2) + ' ' + (cy + r * Math.sin(a1)).toFixed(2) + '"/>';
+    }
+    ring.innerHTML = h;
+  }
+  ring.classList.add('live');
+  [...ring.children].forEach((p, k) => p.setAttribute('class', k < on ? 'done' : k === on ? 'on' : ''));
+}
+
+/* ---------------- the progress cord: knots, clues, tap to jump, drag to scrub ---------------- */
+const cord = {
+  W: 300, H: 56, MID: 30, AMP: 6,
+  knots: [],
+  scrubbing: false,
+  down: null,
+  snapped: null,
+  scrubT: 0,
+  end() { return player.tl ? player.endT() : 1; },
+  x(t) { return 8 + (this.W - 16) * clamp(t / (this.end() || 1), 0, 1); },
+  t(x) { return clamp((x - 8) / (this.W - 16), 0, 1) * this.end(); },
+  y(x) { return this.MID + this.AMP * Math.sin((2 * Math.PI * (x - 8)) / (this.W / 2.3)); },
+  build() {
+    const svg = $('#p-cord');
+    if (!svg || !player.song || !player.tl) return;
+    this.W = svg.clientWidth || 300;
+    svg.setAttribute('viewBox', '0 0 ' + this.W + ' ' + this.H);
+    let d = 'M8 ' + this.y(8).toFixed(1);
+    for (let x = 12; x < this.W - 8; x += 4) d += ' L' + x + ' ' + this.y(x).toFixed(1);
+    d += ' L' + (this.W - 8) + ' ' + this.y(this.W - 8).toFixed(1);
+    $('#p-cord-rest').setAttribute('d', d);
+    $('#p-cord-played').setAttribute('d', d);
+    // knots: instrumentals found in the timed lyrics, plus the ones you tie yourself
+    const auto = player.timing ? [] : player.gaps.filter((g) => !g.intro).map((g) => ({ t: g.start, label: 'Instrumental', auto: true }));
+    const mine = player.timing ? [] : (player.song.knots || []).map((k) => ({ t: k.t, label: k.label, auto: false }));
+    this.knots = auto.concat(mine).filter((k) => k.t < this.end()).sort((a, b) => a.t - b.t);
+    const ns = 'http://www.w3.org/2000/svg';
+    const kg = $('#p-knots'), tg = $('#p-tethers'), clues = $('#p-clues');
+    kg.innerHTML = ''; tg.innerHTML = ''; clues.innerHTML = '';
+    const placed = [];
+    for (const k of this.knots) {
+      const x = this.x(k.t), y = this.y(x);
+      const c = document.createElementNS(ns, 'circle');
+      c.setAttribute('cx', x); c.setAttribute('cy', y); c.setAttribute('r', 6.5);
+      c.setAttribute('class', 'knot' + (k.auto ? '' : ' mine'));
+      c.dataset.t = k.t;
+      kg.appendChild(c);
+      const b = el('button', 'clue' + (k.auto ? '' : ' mine'));
+      b.type = 'button';
+      b.setAttribute('aria-label', 'Jump to ' + k.label + ' at ' + fmtTime(k.t));
+      b.append(svgIcon(k.auto ? 'note' : 'flag'), el('span', null, k.label));
+      clues.appendChild(b);
+      let w = b.offsetWidth, left = clamp(x - w / 2, 0, Math.max(0, this.W - w));
+      // clues that would overlap shrink to just their icon
+      if (placed.some((p) => left < p.r + 4 && left + w > p.l - 4)) {
+        b.querySelector('span').remove();
+        w = b.offsetWidth; left = clamp(x - w / 2, 0, Math.max(0, this.W - w));
+      }
+      b.style.left = left + 'px';
+      placed.push({ l: left, r: left + w });
+      const tether = document.createElementNS(ns, 'path');
+      tether.setAttribute('d', 'M' + x + ' -4 V' + (y - 9));
+      tether.setAttribute('class', 'tether');
+      tg.appendChild(tether);
+      b.onclick = () => player.seek(k.t);
+    }
+    $('#p-cordbox').classList.toggle('timing', !!player.timing);
+  },
+  paint(t, end) {
+    const x = this.x(this.scrubbing ? this.scrubT : t), y = this.y(x);
+    $('#p-cord-cliprect').setAttribute('width', x);
+    for (const id of ['#p-cord-bead', '#p-cord-halo']) { const c = $(id); c.setAttribute('cx', x); c.setAttribute('cy', y); }
+    $('#p-cord-bead').setAttribute('r', this.scrubbing ? 13 : 9);
+    const pt = this.scrubbing ? this.scrubT : t;
+    for (const c of $('#p-knots').children) c.classList.toggle('passed', +c.dataset.t <= pt);
+    const svg = $('#p-cord');
+    svg.setAttribute('aria-valuenow', Math.round((end ? pt / end : 0) * 100));
+    svg.setAttribute('aria-valuetext', fmtTime(pt) + ' of ' + fmtTime(end));
+  },
+  bubble(t) {
+    const bub = $('#p-cord-bubble');
+    $('#p-bub-time').textContent = (this.snapped ? this.snapped.label + ' · ' : '') + fmtTime(t);
+    $('#p-bub-text').textContent = this.snapped ? '' : player.describe(t);
+    bub.hidden = false;
+    const w = bub.offsetWidth;
+    bub.style.left = clamp(this.x(t), w / 2 + 2, this.W - w / 2 - 2) + 'px';
+  },
+};
+{
+  const svg = $('#p-cord');
+  svg.addEventListener('pointerdown', (e) => {
+    if (player.timing) return;
+    cord.down = { x: e.clientX - svg.getBoundingClientRect().left };
+    try { svg.setPointerCapture(e.pointerId); } catch { /* fine */ }
+  });
+  svg.addEventListener('pointermove', (e) => {
+    if (!cord.down) return;
+    const x = e.clientX - svg.getBoundingClientRect().left;
+    // dragging starts only once the finger moves, so a tap on bare cord does nothing
+    if (!cord.scrubbing && Math.abs(x - cord.down.x) > 6) {
+      cord.scrubbing = true;
+      cord.scrubT = player.t;
+      $('#p-cordbox').classList.add('scrubbing');
+    }
+    if (!cord.scrubbing) return;
+    let t = cord.t(x), snap = null;
+    for (const k of cord.knots) if (Math.abs(cord.x(k.t) - x) < 16) snap = k;
+    if (snap) { t = snap.t; if (cord.snapped !== snap && navigator.vibrate) { try { navigator.vibrate(12); } catch { /* fine */ } } }
+    cord.snapped = snap;
+    cord.scrubT = t;
+    player.seek(t, true); // the lyrics follow your finger; a video catches up when you let go
+    cord.bubble(t);
+  });
+  const end = () => {
+    if (!cord.down) return;
+    cord.down = null;
+    if (!cord.scrubbing) return;
+    cord.scrubbing = false;
+    cord.snapped = null;
+    $('#p-cordbox').classList.remove('scrubbing');
+    $('#p-cord-bubble').hidden = true;
+    player.seek(cord.scrubT);
+  };
+  svg.addEventListener('pointerup', end);
+  svg.addEventListener('pointercancel', end);
+  svg.addEventListener('lostpointercapture', end);
+  svg.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    e.preventDefault();
+    player.seek(player.t + (e.key === 'ArrowRight' ? 5 : -5));
+  });
+}
+
+/* Tie a knot where you are, with an optional name. */
+function openTieSheet() {
+  const song = player.song;
+  if (!song || player.timing) return;
+  const t = player.t;
+  const body = el('div', 'stack');
+  body.appendChild(el('div', 'muted', player.describe(t)));
+  const row = el('div', 'sheet-links');
+  for (const name of ['Knot', 'Chorus', 'Verse', 'Bridge', 'Solo']) {
+    const b = el('button', 'btn small' + (name === 'Knot' ? ' primary' : ''), name === 'Knot' ? 'Just a knot' : name);
+    b.type = 'button';
+    b.onclick = () => { player.tieKnot(t, name); closeModal(); toast(name + ' tied at ' + fmtTime(t)); };
+    row.appendChild(b);
+  }
+  body.appendChild(row);
+  body.appendChild(el('div', 'muted small', 'Knots sit on the cord under the lyrics. Tap one to jump there.'));
+  openModal('Tie a knot at ' + fmtTime(t), body);
+}
 
 /* player controls */
 $('#p-back').onclick = () => player.back();
@@ -2279,6 +2522,8 @@ function openPlaybackSheet() {
   const acts = el('div', 'sheet-links');
   const mk2 = (label, icon, fn) => { const b = el('button', 'btn small'); b.type = 'button'; if (icon) b.appendChild(svgIcon(icon)); b.appendChild(document.createTextNode(label)); b.onclick = () => { closeModal(); fn(); }; acts.appendChild(b); };
   mk2('Start again', 'restart', () => player.restart());
+  if (!player.timing) mk2('Tie a knot here', 'flag', () => openTieSheet());
+  if (song.knots && song.knots.length) mk2('Untie my knots', null, () => { player.untieKnots(); toast('Your knots are untied'); });
   mk2('Tap to time', 'timer', () => player.startTiming());
   if (player.nextSong()) mk2('Next in folder', 'next', () => player.goNext());
   mk2('Edit song', 'edit', () => (location.hash = '#/edit/' + song.id));
@@ -2290,13 +2535,16 @@ $('#p-more').onclick = openPlaybackSheet;
 $('#p-video-more').onclick = () => { if (player.song) openTrackOptions(player.song); };
 $('#t-next').onclick = () => player.timingTap();
 $('#t-cancel').onclick = () => player.stopTiming();
-window.addEventListener('resize', () => player.song && player.layout());
+window.addEventListener('resize', () => { if (player.song) { player.layout(); cord.build(); } });
 
 const lyr = $('#p-lyrics');
 lyr.addEventListener('click', (e) => {
+  const card = e.target.closest('.gap-inline');
+  if (card) { player.seek(+card.dataset.t); return; }
   const line = e.target.closest('.line');
   if (line) player.seekToLine(+line.dataset.i);
 });
+$('#p-backnow').onclick = () => { player.touching = false; player.manualUntil = 0; };
 const startManual = () => { player.touching = true; };
 const endManual = () => { player.touching = false; player.manualUntil = performance.now() + settings.resumeDelay * 1000; };
 lyr.addEventListener('touchstart', startManual, { passive: true });
@@ -2313,7 +2561,7 @@ applySettings();
 route();
 window.__lyricaBoot = true;
 try { sessionStorage.removeItem('lyrica.recovered'); } catch {}
-if (document.fonts) document.fonts.ready.then(() => player.song && player.layout());
+if (document.fonts) document.fonts.ready.then(() => { if (player.song) { player.layout(); cord.build(); } });
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
 }

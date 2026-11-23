@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400..700&display=swap">
-  <link rel="stylesheet" href="style.css?v=1.6.1">
+  <link rel="stylesheet" href="style.css?v=1.7.0">
 </head>
 <body>
   <!-- Icon set (inline SVG, no emoji) -->
@@ -43,6 +43,7 @@
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-metronome" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3.5h5l4 16.5h-13z"/><path d="M12 15l5-8"/><path d="M8 15h8"/></g></symbol>
       <symbol id="i-click" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5h3l4.5-4v13L7 14.5H4z"/><path d="M15 9a4 4 0 010 6M17.8 6.5a7.5 7.5 0 010 11"/></g></symbol>
+      <symbol id="i-flag" viewBox="0 0 24 24"><path d="M7 21V4M7 4h10l-2.5 4L17 12H7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-person" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1.2-3.6 4-5.5 7-5.5s5.8 1.9 7 5.5"/></g></symbol>
     </defs>
   </svg>
@@ -228,9 +229,10 @@
         <button type="button" class="icon-btn" id="p-video-more" aria-label="Track options"><svg><use href="#i-more"/></svg></button>
       </div>
     </div>
-    <div id="p-lyrics" class="p-lyrics" tabindex="0"></div>
-    <div id="p-countdown" class="countdown" hidden></div>
-    <div id="p-manual" class="manual-pill" hidden>Scrolling by hand, carrying on in a moment</div>
+    <div class="lyrics-wrap">
+      <div id="p-lyrics" class="p-lyrics" tabindex="0"></div>
+      <button type="button" id="p-backnow" class="backnow" hidden><svg><use href="#i-up"/></svg><span id="p-backnow-text">Back to now</span></button>
+    </div>
     <div id="p-timing" class="timing-panel" hidden>
       <p class="small">Tap <b>Next line</b> as you start singing each line.</p>
       <div class="row gap">
@@ -238,12 +240,23 @@
         <button class="btn primary grow big" id="t-next">Next line</button>
       </div>
     </div>
-    <div id="p-intro" class="gap-card" hidden aria-live="polite"></div>
-    <div id="p-dots" class="beat-dots" hidden aria-hidden="true"></div>
     <footer class="controls">
+      <div id="p-dots" class="beat-dots" hidden aria-hidden="true"></div>
+      <div class="cordbox" id="p-cordbox">
+        <div class="clues" id="p-clues"></div>
+        <svg id="p-cord" class="cord" role="slider" tabindex="0" aria-label="Song position. Drag to move through the song." aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <defs><clipPath id="p-cord-clip"><rect id="p-cord-cliprect" x="0" y="-20" width="0" height="100"/></clipPath></defs>
+          <g id="p-tethers"></g>
+          <path class="rest" id="p-cord-rest"/>
+          <path class="played" id="p-cord-played" clip-path="url(#p-cord-clip)"/>
+          <g id="p-knots"></g>
+          <circle class="halo" id="p-cord-halo" r="22"/>
+          <circle class="bead" id="p-cord-bead" r="9"/>
+        </svg>
+        <div class="cord-bubble" id="p-cord-bubble" hidden><b id="p-bub-time"></b><span id="p-bub-text"></span></div>
+      </div>
       <div class="scrub">
         <span id="p-time" class="time">0:00</span>
-        <div class="progress"><div id="p-progress"></div></div>
         <span id="p-total" class="time">0:00</span>
       </div>
       <div class="dock">
@@ -254,7 +267,10 @@
             <span class="tp-text"><b id="p-tempo-num">Add</b><small id="p-tempo-sub">tempo</small></span>
           </button>
         </div>
-        <button class="ctl play" id="p-play" aria-label="Play"><svg><use href="#i-play"/></svg></button>
+        <div class="playwrap">
+          <svg class="count-ring" id="p-ring" viewBox="0 0 92 92" aria-hidden="true"></svg>
+          <button class="ctl play" id="p-play" aria-label="Play"><svg><use href="#i-play"/></svg></button>
+        </div>
         <div class="dock-side end">
           <button type="button" class="round-btn" id="p-metro" aria-pressed="false" aria-label="Metronome click"><svg><use href="#i-click"/></svg><i id="p-beat" class="beat-dot" hidden></i></button>
           <button type="button" class="round-btn" id="p-more" aria-label="Playback options"><svg><use href="#i-more"/></svg></button>
@@ -298,6 +314,6 @@
       }, 1500);
     });
   </script>
-  <script src="app.js?v=1.6.1"></script>
+  <script src="app.js?v=1.7.0"></script>
 </body>
 </html>
