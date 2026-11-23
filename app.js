@@ -4,7 +4,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
 const LRCLIB = 'https://lrclib.net/api';
 const ITUNES = 'https://itunes.apple.com/search';
 const DEEZER = 'https://api.deezer.com';
@@ -1331,6 +1331,7 @@ const player = {
     this.song.bpmSource = source;
     upsertSong(this.song);
     this.tempoChanged();
+    if (settings.metroOn && this.playing && !this.countIn && !metro.running) this.startMetro();
   },
   tapTempo() {
     const now = performance.now();
@@ -1351,8 +1352,11 @@ const player = {
     if (!this.song) return;
     $('#p-speed').textContent = Math.round((this.song.speed || 1) * 100) + '%';
     $('#p-bpm').textContent = this.song.bpm ? this.song.bpm + ' BPM' : 'No tempo';
-    $('#p-metro').setAttribute('aria-pressed', String(!!settings.metroOn));
-    $('#p-beat').hidden = !(settings.metroOn && this.song.bpm);
+    const on = !!settings.metroOn;
+    $('#p-metro').setAttribute('aria-pressed', String(on));
+    $('#p-metro-chip').setAttribute('aria-pressed', String(on));
+    $('#p-metro-label').textContent = !on ? 'Click off' : this.song.bpm ? this.song.bpm + ' BPM' : 'Set tempo';
+    $('#p-beat').hidden = !(on && this.song.bpm);
   },
   finished() {
     this.pause();
@@ -1522,13 +1526,21 @@ $('#p-font-up').onclick = () => changeFont(2);
 $('#p-chords-toggle').onclick = () => { settings.showChords = !settings.showChords; saveSettings(); $('#p-lyrics').classList.toggle('no-chords', !settings.showChords); player.layout(); };
 $('#p-edit').onclick = () => { if (player.song) location.hash = '#/edit/' + player.song.id; };
 $('#p-tap-time').onclick = () => player.startTiming();
-$('#p-metro').onclick = () => {
+function toggleMetronome() {
   settings.metroOn = !settings.metroOn;
   saveSettings();
-  if (!player.song.bpm && settings.metroOn) toast('No tempo yet. Tap along or use + and \u2212 to set one.');
-  if (settings.metroOn && player.playing && !player.countIn) player.startMetro(); else if (!settings.metroOn) metro.stop();
+  metro.ensure(); // unlock audio on this tap
+  if (settings.metroOn && !player.song.bpm) {
+    $('#p-more-panel').hidden = false;
+    requestAnimationFrame(() => player.layout());
+    toast('This song has no tempo yet. Tap the Tap button along with the beat.');
+  }
+  if (settings.metroOn && player.playing && !player.countIn) player.startMetro();
+  else if (!settings.metroOn) metro.stop();
   player.updateUi();
-};
+}
+$('#p-metro').onclick = toggleMetronome;
+$('#p-metro-chip').onclick = toggleMetronome;
 $('#p-bpm-down').onclick = () => player.setBpm((player.song.bpm || 101) - 1, 'manual');
 $('#p-bpm-up').onclick = () => player.setBpm((player.song.bpm || 99) + 1, 'manual');
 $('#p-tap').onclick = () => { metro.ensure(); player.tapTempo(); };

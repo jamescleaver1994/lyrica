@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400..700&display=swap">
-  <link rel="stylesheet" href="style.css?v=1.2.0">
+  <link rel="stylesheet" href="style.css?v=1.2.1">
 </head>
 <body>
   <!-- Icon set (inline SVG, no emoji) -->
@@ -224,7 +224,7 @@
       <div class="progress"><div id="p-progress"></div></div>
       <div class="row ctrl-meta">
         <span id="p-time" class="muted small time">0:00</span>
-        <span class="row gap"><i id="p-beat" class="beat-dot" hidden></i><span id="p-mode" class="badge"></span></span>
+        <span class="row gap"><button type="button" id="p-metro-chip" class="metro-chip" aria-pressed="false" aria-label="Metronome"><i id="p-beat" class="beat-dot"></i><svg><use href="#i-metronome"/></svg><span id="p-metro-label">Click off</span></button><span id="p-mode" class="badge"></span></span>
       </div>
       <div class="row ctrl-row">
         <button class="ctl" id="p-restart" aria-label="Restart"><svg><use href="#i-restart"/></svg></button>
@@ -245,7 +245,7 @@
           <button class="btn small" id="p-chords-toggle">Chords</button>
         </div>
         <div class="row gap center metro-row">
-          <button class="btn small toggle" id="p-metro" aria-pressed="false"><svg><use href="#i-metronome"/></svg>Click</button>
+          <button class="btn small toggle" id="p-metro" aria-pressed="false"><svg><use href="#i-metronome"/></svg>Metronome</button>
           <button class="btn small" id="p-bpm-down" aria-label="Slower tempo">&minus;</button>
           <output id="p-bpm" class="strong bpm-out">No tempo</output>
           <button class="btn small" id="p-bpm-up" aria-label="Faster tempo">+</button>
@@ -293,6 +293,6 @@
       }, 1500);
     });
   </script>
-  <script src="app.js?v=1.2.0"></script>
+  <script src="app.js?v=1.2.1"></script>
 </body>
 </html>
