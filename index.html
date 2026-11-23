@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400..700&display=swap">
-  <link rel="stylesheet" href="style.css?v=1.6.0">
+  <link rel="stylesheet" href="style.css?v=1.6.1">
 </head>
 <body>
   <!-- Icon set (inline SVG, no emoji) -->
@@ -239,6 +239,7 @@
       </div>
     </div>
     <div id="p-intro" class="gap-card" hidden aria-live="polite"></div>
+    <div id="p-dots" class="beat-dots" hidden aria-hidden="true"></div>
     <footer class="controls">
       <div class="scrub">
         <span id="p-time" class="time">0:00</span>
@@ -247,6 +248,7 @@
       </div>
       <div class="dock">
         <div class="dock-side">
+          <button type="button" class="round-btn" id="p-restart" aria-label="Start again"><svg><use href="#i-restart"/></svg></button>
           <button type="button" class="tempo-pill" id="p-tempo-btn" aria-label="Song tempo">
             <svg><use href="#i-metronome"/></svg>
             <span class="tp-text"><b id="p-tempo-num">Add</b><small id="p-tempo-sub">tempo</small></span>
@@ -296,6 +298,6 @@
       }, 1500);
     });
   </script>
-  <script src="app.js?v=1.6.0"></script>
+  <script src="app.js?v=1.6.1"></script>
 </body>
 </html>

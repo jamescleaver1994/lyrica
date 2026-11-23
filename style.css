@@ -541,3 +541,28 @@ html.in-player .tabbar, .tabbar.hide { display: none; }
 .gc-count { font: 700 14px var(--font-display); color: var(--muted); min-height: 0; }
 .gc-count:empty { display: none; }
 .gc-count.go { color: var(--accent-2); font-size: 20px; }
+
+/* restart in the dock */
+.dock-side .round-btn#p-restart { width: 48px; height: 48px; }
+.dock-side .round-btn#p-restart svg { width: 20px; height: 20px; }
+@media (max-width: 430px) {
+  .tempo-pill { padding: 0 12px; }
+  .tempo-pill > svg { display: none; }
+}
+
+/* visual metronome: soft dots just above the controls */
+.beat-dots { position: absolute; left: 0; right: 0; bottom: calc(132px + max(18px, env(safe-area-inset-bottom))); z-index: 2; display: flex; justify-content: center; gap: 10px; pointer-events: none; }
+.player > .beat-dots { position: absolute; }
+.beat-dots[hidden] { display: none; }
+.beat-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--text); opacity: .14; transition: opacity .45s ease-out, transform .45s ease-out, background-color .45s; }
+.beat-dots i.down { width: 8px; height: 8px; margin-top: -1px; }
+.beat-dots i.on { opacity: .7; transform: scale(1.35); transition: opacity .04s, transform .04s; }
+.beat-dots i.down.on { background: var(--accent-2); }
+@media (max-width: 380px) {
+  .dock { gap: 8px; }
+  .dock-side { gap: 6px; }
+  .dock .ctl.play { width: 64px; height: 64px; }
+  .round-btn, .dock-side .round-btn#p-restart { width: 44px; height: 44px; }
+  .tempo-pill { height: 48px; padding: 0 10px; }
+  .tp-sig { display: none; }
+}

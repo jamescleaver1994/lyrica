@@ -4,7 +4,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.6.1';
 const LRCLIB = 'https://lrclib.net/api';
 const ITUNES = 'https://itunes.apple.com/search';
 const DEEZER = 'https://api.deezer.com';
@@ -1650,7 +1650,7 @@ const player = {
       if (this.song.skipIntro && this.synced) this.t = this.introSkipTo();
       this.startCountIn();
     }
-    if (!this.countIn) this.startMetro();
+    if (!this.countIn) { this.startMetro(); this.beatFrom = this.t; }
     this.lastFrame = performance.now();
     wake.on();
     this.updateUi();
@@ -1764,7 +1764,9 @@ const player = {
     $('#p-tempo-btn').classList.toggle('empty', !has);
     $('#p-tempo-btn').classList.toggle('suggested', suggested);
     $('#p-tempo-num').textContent = has ? String(this.playingBpm()) : 'Tap';
-    $('#p-tempo-sub').textContent = !has ? 'to set tempo' : suggested ? 'Check tempo' : 'BPM · ' + timeSig(this.song.beatsPerBar);
+    const sub = $('#p-tempo-sub');
+    if (!has || suggested) sub.textContent = !has ? 'to set tempo' : 'Check tempo';
+    else { sub.textContent = 'BPM'; sub.appendChild(el('span', 'tp-sig', ' · ' + timeSig(this.song.beatsPerBar))); }
     $('#p-tempo-btn').setAttribute('aria-label', !has ? 'Set the tempo by tapping' : suggested ? 'Suggested tempo, tap to check it' : 'Song tempo');
     const video = this.usingVideo();
     $('#p-metro').setAttribute('aria-pressed', String(on && has && !video));
@@ -1813,6 +1815,7 @@ const player = {
         this.countIn = null;
         cd.hidden = true;
         this.lastFrame = ts;
+        this.beatFrom = this.t;
         this.startMetro(ci.audioEnd || 0);
       }
     }
@@ -1877,6 +1880,22 @@ const player = {
     for (const [i] of this.lit) if (!next.has(i)) this.nodes[i].style.removeProperty('--f');
     for (const [i, f] of next) if (this.lit.get(i) !== f) this.nodes[i].style.setProperty('--f', f);
     this.lit = next;
+  },
+  /* Visual metronome: a row of soft dots, one per beat of the bar, for when the click is off.
+   * It counts from where playback started, the same grid the audible click uses. */
+  paintDots() {
+    const box = $('#p-dots');
+    const bpm = this.song.bpm;
+    const show = !!(bpm && this.playing && !this.countIn && !this.timing && !settings.metroOn && !this.usingVideo() && this.beatFrom != null);
+    if (!show) { if (!box.hidden) { box.hidden = true; this.dotBeat = -1; } return; }
+    const bpb = this.song.beatsPerBar || 4;
+    if (box.childElementCount !== bpb) { box.innerHTML = ''; for (let i = 0; i < bpb; i++) box.appendChild(el('i', i === 0 ? 'down' : null)); this.dotBeat = -1; }
+    box.hidden = false;
+    const beat = Math.floor((this.t - this.beatFrom) / (60 / bpm) + 0.0001);
+    if (beat === this.dotBeat || beat < 0) return;
+    this.dotBeat = beat;
+    const on = beat % bpb;
+    [...box.children].forEach((d, i) => d.classList.toggle('on', i === on));
   },
   /* Instrumental card: how long the gap is, bar by bar, and "back in 4, 3, 2, 1" at the end. */
   paintGap(gap) {
@@ -1951,6 +1970,7 @@ const player = {
     $('#p-time').textContent = fmtTime(this.t);
     $('#p-total').textContent = '-' + fmtTime(Math.max(0, end - this.t) / (this.song.speed || 1));
     this.paintGap(this.gapHold || gap);
+    this.paintDots();
 
     // auto-scroll (unless the user is scrolling by hand)
     const box = $('#p-lyrics');
@@ -2030,6 +2050,7 @@ const player = {
 /* player controls */
 $('#p-back').onclick = () => player.back();
 $('#p-play').onclick = () => player.toggle();
+$('#p-restart').onclick = () => player.restart();
 const changeFont = (d) => { settings.fontSize = clamp(settings.fontSize + d, 18, 56); saveSettings(); requestAnimationFrame(() => player.layout()); };
 $('#p-edit').onclick = () => { if (player.song) location.hash = '#/edit/' + player.song.id; };
 $('#p-speed-note').onclick = () => player.setSpeed(1);
