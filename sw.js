@@ -1,7 +1,7 @@
 /* Offline support: keeps the app, its fonts and cover images on the phone so it opens without internet.
  * When releasing a new version, bump VERSION here and the ?v= numbers in index.html.
  */
-const VERSION = '1.4.0';
+const VERSION = '1.4.1';
 const CACHE = 'lyrica-app-' + VERSION;
 const RUNTIME = 'lyrica-runtime-v1';
 const SHELL = ['./', 'index.html', 'style.css?v=' + VERSION, 'app.js?v=' + VERSION, 'manifest.webmanifest',
@@ -46,6 +46,9 @@ self.addEventListener('fetch', (e) => {
   if (url.origin !== location.origin) return; // lyrics and cover searches go straight to the network
 
   // The page itself: always try the network first so updates arrive, fall back to the saved copy offline.
+  // Only the app's own page is saved for offline use. Other pages on this site (like test pages) pass straight through.
+  const scopePath = new URL(self.registration.scope).pathname;
+  if (req.mode === 'navigate' && url.pathname !== scopePath && url.pathname !== scopePath + 'index.html') return;
   if (req.mode === 'navigate') {
     e.respondWith(fetch(req, { cache: 'no-cache' })
       .then((res) => { if (res.ok) caches.open(CACHE).then((c) => c.put('./', res.clone())); return res; })
