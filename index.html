@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400..700&display=swap">
-  <link rel="stylesheet" href="style.css?v=1.5.0">
+  <link rel="stylesheet" href="style.css?v=1.6.0">
 </head>
 <body>
   <!-- Icon set (inline SVG, no emoji) -->
@@ -191,6 +191,7 @@
         <span class="muted small">On-beat count-ins use the song's tempo. Songs without one fall back to 3 seconds.</span>
       </label>
       <label class="setting check"><input id="set-click" type="checkbox"> Play a click during the count-in</label>
+      <label class="setting check"><input id="set-gaps" type="checkbox"> Pause at instrumentals, then count me back in</label>
       <label class="setting check"><input id="set-bpm" type="checkbox"> Look up song tempo online</label>
       <label class="setting check"><input id="set-chords" type="checkbox"> Show chords</label>
       <label class="setting check"><input id="set-wake" type="checkbox"> Keep screen awake while playing</label>
@@ -237,7 +238,7 @@
         <button class="btn primary grow big" id="t-next">Next line</button>
       </div>
     </div>
-    <div id="p-intro" class="intro-pill" hidden></div>
+    <div id="p-intro" class="gap-card" hidden aria-live="polite"></div>
     <footer class="controls">
       <div class="scrub">
         <span id="p-time" class="time">0:00</span>
@@ -295,6 +296,6 @@
       }, 1500);
     });
   </script>
-  <script src="app.js?v=1.5.0"></script>
+  <script src="app.js?v=1.6.0"></script>
 </body>
 </html>

@@ -467,7 +467,7 @@ html.in-player .tabbar, .tabbar.hide { display: none; }
   display: block; margin: 10px auto 0; padding: 6px 12px; border-radius: 99px; cursor: pointer;
   font: 600 12px var(--font-display); color: var(--accent-2); background: color-mix(in srgb, var(--accent) 14%, transparent); border: 0;
 }
-.intro-pill {
+.intro-pill, .gap-card {
   position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(150px + max(18px, env(safe-area-inset-bottom))); z-index: 6;
   padding: 8px 16px; border-radius: 99px; white-space: nowrap;
   font: 600 13px var(--font-display); color: var(--text); background: rgba(17, 40, 48, .9); border: 1px solid var(--border); backdrop-filter: blur(10px);
@@ -522,3 +522,22 @@ html.in-player .tabbar, .tabbar.hide { display: none; }
 .track-status { margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); color: var(--muted); }
 .track-status.ok { color: var(--text); background: color-mix(in srgb, var(--chord) 10%, transparent); border-color: color-mix(in srgb, var(--chord) 40%, transparent); }
 .track-status.warn { color: var(--text); background: color-mix(in srgb, var(--accent) 14%, transparent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+
+/* Soft focus band: --f (0 to 1) is set per line while playing */
+.p-lyrics.band .line.lyric, .p-lyrics.band .line.pause { color: color-mix(in srgb, var(--text) calc(var(--f, 0) * 100%), var(--dim)); opacity: 1; transition: color .25s linear; }
+.p-lyrics.band .line.lyric .w { color: inherit; text-shadow: 0 0 28px rgba(244, 91, 105, calc(var(--f, 0) * var(--f, 0) * .45)); }
+.p-lyrics.band .line.past { opacity: 1; }
+
+/* Instrumental and intro card */
+.player > .gap-card { position: absolute; }
+.gap-card { white-space: normal; width: min(calc(100% - 32px), 360px); padding: 12px 16px 12px; border-radius: 18px; display: flex; flex-direction: column; gap: 8px; text-align: left; }
+.gap-card.held { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.gc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.gc-title { font: 700 15px var(--font-display); letter-spacing: .02em; }
+.gc-sub { font: 600 12px var(--font-display); color: var(--muted); font-variant-numeric: tabular-nums; }
+.gc-bars { display: flex; gap: 4px; }
+.gc-bars i { flex: 1; height: 6px; border-radius: 3px; background: var(--surface-strong); overflow: hidden; }
+.gc-bars b { display: block; height: 100%; background: linear-gradient(90deg, var(--cool), var(--accent)); transform-origin: left; transform: scaleX(0); }
+.gc-count { font: 700 14px var(--font-display); color: var(--muted); min-height: 0; }
+.gc-count:empty { display: none; }
+.gc-count.go { color: var(--accent-2); font-size: 20px; }

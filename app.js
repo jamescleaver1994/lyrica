@@ -4,7 +4,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 const LRCLIB = 'https://lrclib.net/api';
 const ITUNES = 'https://itunes.apple.com/search';
 const DEEZER = 'https://api.deezer.com';
@@ -125,7 +125,7 @@ const store = {
 
 const DEFAULT_SETTINGS = {
   fontSize: 28, resumeDelay: 3, countIn: '1bar', clickSound: true, autoBpm: true, metroOn: false,
-  showChords: true, keepAwake: true, motion: true, covers: true, libView: 'songs', libSort: 'recent',
+  showChords: true, keepAwake: true, motion: true, covers: true, libView: 'songs', libSort: 'recent', pauseGaps: false,
 };
 let settings = Object.assign({}, DEFAULT_SETTINGS, store.get('lyrica.settings', {}));
 if (!settings.v120) { // one-off upgrade: move the old 3 second default to an on-beat count-in
@@ -523,6 +523,30 @@ function buildTimeline(parsed, song) {
   lines.forEach((l, i) => { if (isTimed(l) && l.time != null) order.push(i); });
   order.sort((a, b) => lines[a].time - lines[b].time || a - b);
   return { lines, end, order };
+}
+
+/* Instrumental gaps: stretches with nothing to sing. Only synced lyrics know where they are.
+ * A gap starts at a blank timed line, or roughly when a line has had time to be sung. */
+function findGaps(tl, song, synced) {
+  if (!synced) return [];
+  const lines = tl.lines;
+  const lyrics = tl.order.filter((i) => lines[i].kind === 'lyric');
+  const barSec = song.bpm ? (60 / song.bpm) * (song.beatsPerBar || 4) : 0;
+  const minLen = Math.max(7, barSec * 3);
+  const gaps = [];
+  if (lyrics.length && lines[lyrics[0]].time >= 4) gaps.push({ start: 0, end: lines[lyrics[0]].time, intro: true, next: lyrics[0] });
+  for (let k = 0; k < lyrics.length - 1; k++) {
+    const a = lines[lyrics[k]];
+    const b = lines[lyrics[k + 1]];
+    let start = null;
+    for (let i = lyrics[k] + 1; i < lyrics[k + 1]; i++) if (lines[i].kind === 'pause' && lines[i].time != null) { start = lines[i].time; break; }
+    if (start == null) {
+      const words = (a.src || '').replace(/\[[^\]]*\]/g, ' ').trim().split(/\s+/).filter(Boolean).length;
+      start = a.time + clamp(words * 0.42 + 0.8, 1.5, 7);
+    }
+    if (b.time - start >= minLen) gaps.push({ start, end: b.time, intro: false, next: lyrics[k + 1] });
+  }
+  return gaps;
 }
 
 /* ---------------- router ---------------- */
@@ -1030,6 +1054,7 @@ function openSettings() {
   $('#set-resume').value = String(settings.resumeDelay);
   $('#set-countin').value = String(settings.countIn);
   $('#set-click').checked = settings.clickSound;
+  $('#set-gaps').checked = !!settings.pauseGaps;
   $('#set-bpm').checked = settings.autoBpm;
   $('#set-chords').checked = settings.showChords;
   $('#set-wake').checked = settings.keepAwake;
@@ -1042,6 +1067,7 @@ $('#set-font').addEventListener('input', (e) => { settings.fontSize = +e.target.
 $('#set-resume').addEventListener('change', (e) => { settings.resumeDelay = +e.target.value; saveSettings(); });
 $('#set-countin').addEventListener('change', (e) => { settings.countIn = e.target.value; saveSettings(); });
 $('#set-click').addEventListener('change', (e) => { settings.clickSound = e.target.checked; saveSettings(); });
+$('#set-gaps').addEventListener('change', (e) => { settings.pauseGaps = e.target.checked; saveSettings(); });
 $('#set-bpm').addEventListener('change', (e) => { settings.autoBpm = e.target.checked; saveSettings(); });
 $('#set-chords').addEventListener('change', (e) => { settings.showChords = e.target.checked; saveSettings(); });
 $('#set-wake').addEventListener('change', (e) => { settings.keepAwake = e.target.checked; saveSettings(); });
@@ -1405,6 +1431,9 @@ const player = {
   vpAnchor: null,
   vpLast: -1,
   vpToken: 0,
+  gaps: [],
+  gapHold: null, // paused at an instrumental, waiting to come back in
+  lit: new Map(), // line index -> focus level currently painted
 
   open(song, folderId) {
     this.song = song;
@@ -1559,6 +1588,9 @@ const player = {
     box.innerHTML = '';
     box.classList.toggle('no-chords', !settings.showChords);
     this.nodes = tl.lines.map((l, i) => box.appendChild(lineNode(l, i)));
+    this.lit = new Map();
+    this.gapHold = null;
+    this.gaps = this.song ? findGaps(tl, this.song, this.synced && !this.timing) : [];
     this.cur = -2;
     this.hasChords = tl.lines.some((l) => l.hasChords);
     this.layout();
@@ -1607,7 +1639,14 @@ const player = {
     if (this.t >= this.tl.end - 0.1) { this.t = 0; this.maxT = 0; }
     this.playing = true;
     this.manualUntil = 0;
-    if (this.t < 0.05 && !this.timing) {
+    const hold = this.gapHold;
+    this.gapHold = null;
+    if (hold && !this.timing) {
+      // come back in right where the next line starts, after a count-in
+      this.t = hold.end;
+      this.gapDone = hold;
+      this.startCountIn(String(settings.countIn) === '0' ? '1bar' : null);
+    } else if (this.t < 0.05 && !this.timing) {
       if (this.song.skipIntro && this.synced) this.t = this.introSkipTo();
       this.startCountIn();
     }
@@ -1626,6 +1665,7 @@ const player = {
   },
   toggle() { this.playing ? this.pause() : this.play(); },
   restart() {
+    this.gapHold = null;
     this.t = 0;
     this.maxT = 0;
     this.manualUntil = 0;
@@ -1640,6 +1680,7 @@ const player = {
     if (!l || l.time == null || this.timing) return;
     this.t = l.time;
     this.manualUntil = 0;
+    this.gapHold = null;
     if (this.usingVideo()) this.videoSeek(l.time);
     this.updateUi();
   },
@@ -1659,8 +1700,8 @@ const player = {
     return first - lead > 1 ? first - lead : 0;
   },
   /* Count-in: on the beat when the song has a tempo, otherwise a plain seconds countdown. */
-  startCountIn() {
-    const mode = String(settings.countIn);
+  startCountIn(force) {
+    const mode = force || String(settings.countIn);
     if (mode === '0' || this.usingVideo()) return;
     const bpb = this.song.beatsPerBar || 4;
     let beats, beatSec, accentEvery;
@@ -1687,6 +1728,7 @@ const player = {
   },
   tempoChanged() {
     const bpm = this.song && this.song.bpm;
+    if (this.song && this.tl) this.gaps = findGaps(this.tl, this.song, this.synced && !this.timing);
     // the background glow breathes once every two bars when the tempo is known
     $('#view-player').style.setProperty('--breathe', bpm ? clamp((60 / bpm) * 8, 4, 14).toFixed(2) + 's' : '9s');
     if (metro.running && bpm) metro.bpm = bpm * (this.song.speed || 1);
@@ -1798,9 +1840,88 @@ const player = {
         upsertSong(this.song);
       }
       if (!this.timing && this.t >= this.tl.end) { this.t = this.tl.end; this.finished(); }
+      else if (settings.pauseGaps && !this.timing) {
+        const g = this.gaps.find((x) => !x.intro && this.t >= x.start && this.t < x.start + 1.5);
+        if (g && g !== this.gapDone) { this.pause(); this.gapHold = g; this.gapDone = g; this.updateUi(); }
+      }
     }
     this.paint(dt, ts);
     this.raf = requestAnimationFrame((n) => this.frame(n));
+  },
+  /* Soft focus band: the current line and its neighbours are lit, fading with distance,
+   * so being half a line ahead or behind still reads naturally. */
+  paintBand(pos, frac, gap) {
+    const box = $('#p-lyrics');
+    const band = !this.timing;
+    box.classList.toggle('band', band);
+    if (!band) return;
+    const order = this.tl.order;
+    const next = new Map();
+    if (pos >= -1 && order.length) {
+      const c = pos + frac;
+      let nextLine = -1;
+      let rise = 0;
+      if (gap) {
+        // during an instrumental everything rests, and the next line wakes up in the last bar
+        nextLine = gap.next;
+        const barSec = this.song.bpm ? (60 / this.song.bpm) * (this.song.beatsPerBar || 4) : 4;
+        rise = clamp(1 - (gap.end - this.t) / barSec, 0, 1);
+      }
+      for (let k = Math.max(0, Math.floor(c) - 3); k <= Math.min(order.length - 1, Math.ceil(c) + 3); k++) {
+        const d = Math.abs(k + 0.5 - c);
+        let f = clamp(1 - (d - 0.5) / 1.4, 0, 1);
+        if (gap) f = order[k] === nextLine ? Math.max(f * 0.35, rise) : f * 0.35;
+        if (f > 0.01) next.set(order[k], Math.round(f * 50) / 50);
+      }
+    }
+    for (const [i] of this.lit) if (!next.has(i)) this.nodes[i].style.removeProperty('--f');
+    for (const [i, f] of next) if (this.lit.get(i) !== f) this.nodes[i].style.setProperty('--f', f);
+    this.lit = next;
+  },
+  /* Instrumental card: how long the gap is, bar by bar, and "back in 4, 3, 2, 1" at the end. */
+  paintGap(gap) {
+    const card = $('#p-intro');
+    if (!gap || this.countIn) { card.hidden = true; this.gapShown = null; return; }
+    const speed = this.song.speed || 1;
+    const bpm = this.song.bpm;
+    const bpb = this.song.beatsPerBar || 4;
+    const barSec = bpm ? (60 / bpm) * bpb : 0;
+    const len = gap.end - gap.start;
+    const bars = barSec ? Math.max(1, Math.round(len / barSec)) : 0;
+    if (this.gapShown !== gap) {
+      this.gapShown = gap;
+      card.innerHTML = '';
+      const head = el('div', 'gc-head');
+      head.append(el('span', 'gc-title', gap.intro ? 'Intro' : 'Instrumental'), el('span', 'gc-sub'));
+      const track = el('div', 'gc-bars');
+      const segs = bars && bars <= 16 ? bars : 1;
+      for (let i = 0; i < segs; i++) track.appendChild(el('i', null)).appendChild(el('b'));
+      card.append(head, track, el('div', 'gc-count'));
+    }
+    card.hidden = false;
+    card.classList.toggle('held', !!this.gapHold);
+    const left = Math.max(0, gap.end - this.t); // song seconds until the next line
+    const sub = card.querySelector('.gc-sub');
+    const count = card.querySelector('.gc-count');
+    if (this.gapHold) {
+      sub.textContent = bars ? bars + (bars === 1 ? ' bar' : ' bars') : Math.round(len / speed) + 's';
+      count.textContent = 'Paused. Press play to come back in with a count-in.';
+      count.classList.remove('go');
+    } else {
+      const barsLeft = barSec ? Math.ceil(left / barSec - 0.001) : 0;
+      sub.textContent = bars ? barsLeft + ' of ' + bars + (bars === 1 ? ' bar' : ' bars') + ' left' : Math.ceil(left / speed) + 's left';
+      // the last bar (or last 4 seconds without a tempo) counts you back in
+      const beatSec = bpm ? 60 / bpm : 1;
+      const beatsLeft = Math.ceil(left / beatSec - 0.001);
+      const inLast = bpm ? beatsLeft <= bpb : left / speed <= 4;
+      count.textContent = inLast && beatsLeft > 0 ? 'Back in ' + beatsLeft : gap.intro ? 'First line coming up' : '';
+      count.classList.toggle('go', inLast);
+    }
+    // fill the bar segments
+    const segsEls = card.querySelectorAll('.gc-bars i b');
+    const done = clamp((this.t - gap.start) / len, 0, 1);
+    const n = segsEls.length;
+    segsEls.forEach((b, i) => { b.style.transform = 'scaleX(' + clamp(done * n - i, 0, 1) + ')'; });
   },
   paint(dt, now) {
     const lines = this.tl.lines;
@@ -1823,19 +1944,13 @@ const player = {
       });
       this.cur = curLine;
     }
+    const gap = this.timing ? null : this.gaps.find((g) => this.t >= g.start && this.t < g.end) || null;
+    this.paintBand(pos, frac, gap);
     const end = this.endT();
     $('#p-progress').style.width = (end ? clamp(this.t / end, 0, 1) * 100 : 0) + '%';
     $('#p-time').textContent = fmtTime(this.t);
     $('#p-total').textContent = '-' + fmtTime(Math.max(0, end - this.t) / (this.song.speed || 1));
-    // long intros: say when the first line is coming
-    const intro = $('#p-intro');
-    const firstAt = order.length && !this.timing && this.synced ? lines[order[0]].time : 0;
-    const wait = (firstAt - this.t) / (this.song.speed || 1);
-    if (firstAt > 4 && wait > 0.4 && !this.countIn) {
-      intro.hidden = false;
-      const bars = this.song.bpm ? Math.ceil(wait / ((60 / (this.song.bpm * (this.song.speed || 1))) * (this.song.beatsPerBar || 4))) : 0;
-      intro.textContent = 'Intro · first line in ' + Math.ceil(wait) + 's' + (bars ? ' (' + bars + (bars === 1 ? ' bar)' : ' bars)') : '');
-    } else intro.hidden = true;
+    this.paintGap(this.gapHold || gap);
 
     // auto-scroll (unless the user is scrolling by hand)
     const box = $('#p-lyrics');
@@ -2120,6 +2235,15 @@ function openPlaybackSheet() {
     cb.checked = !!song.skipIntro;
     cb.onchange = () => { song.skipIntro = cb.checked; upsertSong(song); };
     lab.append(cb, document.createTextNode('Skip the intro (start ' + (song.bpm ? 'a bar' : 'a few seconds') + ' before the first line)'));
+    body.appendChild(lab);
+  }
+  if (player.gaps.some((g) => !g.intro)) {
+    const lab = el('label', 'setting check');
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = !!settings.pauseGaps;
+    cb.onchange = () => { settings.pauseGaps = cb.checked; saveSettings(); };
+    lab.append(cb, document.createTextNode('Pause at instrumentals, then count me back in'));
     body.appendChild(lab);
   }
   // display
