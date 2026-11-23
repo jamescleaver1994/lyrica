@@ -626,6 +626,52 @@ function songTile(song, opts = {}) {
   return li;
 }
 
+/* ---------------- the cord through lists ----------------
+ * Songs hang on a loose, wavy cord with a bead for each one. In a folder the beads are numbered
+ * and the first is coral (up next). Rows string themselves on one after another. */
+function threadList(ul, numbered) {
+  ul.classList.add('threaded');
+  ul.classList.toggle('numbered', !!numbered);
+  const rows = [...ul.children].filter((li) => li.tagName === 'LI' && !li.classList.contains('letter-head'));
+  rows.forEach((li, i) => {
+    li.style.setProperty('--i', Math.min(i, 14));
+    const bead = el('span', 'bead' + (i === 0 ? ' first' : ''), numbered ? String(i + 1) : '');
+    bead.setAttribute('aria-hidden', 'true');
+    li.prepend(bead);
+  });
+  requestAnimationFrame(() => drawThread(ul));
+}
+function drawThread(ul) {
+  const old = ul.querySelector(':scope > svg.thread');
+  if (old) old.remove();
+  const beads = [...ul.querySelectorAll(':scope > li > .bead')];
+  if (!beads.length || !ul.offsetParent) return;
+  const ns = 'http://www.w3.org/2000/svg';
+  const top = ul.getBoundingClientRect().top;
+  const pts = beads.map((b) => { const r = b.getBoundingClientRect(); return [r.left - ul.getBoundingClientRect().left + r.width / 2, r.top - top + r.height / 2]; });
+  const x = pts[0][0];
+  const h = ul.scrollHeight;
+  let d = 'M' + x + ' ' + Math.max(0, pts[0][1] - 26);
+  let prev = [x, Math.max(0, pts[0][1] - 26)];
+  pts.concat([[x, Math.min(h + 30, pts[pts.length - 1][1] + 60)]]).forEach((p, i) => {
+    const dy = p[1] - prev[1];
+    const sway = (i % 2 ? 1 : -1) * 9;
+    d += ' C' + (x + sway) + ' ' + (prev[1] + dy * 0.35) + ' ' + (x - sway) + ' ' + (p[1] - dy * 0.35) + ' ' + x + ' ' + p[1];
+    prev = p;
+  });
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('class', 'thread');
+  svg.setAttribute('width', x * 2);
+  svg.setAttribute('height', h + 40);
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(ns, 'path');
+  path.setAttribute('d', d);
+  path.setAttribute('pathLength', '1');
+  svg.appendChild(path);
+  ul.prepend(svg);
+}
+window.addEventListener('resize', () => document.querySelectorAll('ul.threaded').forEach(drawThread));
+
 /* ---------------- library: songs / artists / folders ---------------- */
 const SORTS = {
   recent: { label: 'Recently played', short: 'Recent', fn: (a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0) || (b.created || 0) - (a.created || 0) },
@@ -690,6 +736,8 @@ function renderLibrary() {
       ul.appendChild(li);
     }
     box.appendChild(ul);
+    [...ul.children].forEach((li, i) => li.style.setProperty('--i', Math.min(i, 14)));
+    ul.classList.add('strung');
     if (!folders.length) { empty.hidden = false; empty.textContent = 'Folders keep setlists, genres or anything else together. A song can be in as many folders as you like.'; }
   } else if (view === 'artists') {
     const groups = new Map();
@@ -747,6 +795,7 @@ function renderLibrary() {
       }
       ul.appendChild(songTile(s));
     }
+    threadList(ul, false);
     if (!list.length) { empty.hidden = false; empty.textContent = songs.length ? 'No songs match that filter.' : 'No songs yet. Use Find to look one up, or the plus button to paste your own.'; }
   }
   renderAlphaRail(letters);
@@ -816,6 +865,7 @@ function renderFolder() {
   const ul = $('#folder-list');
   ul.innerHTML = '';
   list.forEach((s, i) => ul.appendChild(songTile(s, { reorder: reorderMode, index: i, count: list.length, folderId: f.id })));
+  threadList(ul, true);
   $('#folder-empty').hidden = list.length > 0;
 }
 function moveInFolder(i, dir) {
@@ -962,15 +1012,28 @@ $('#search-form').addEventListener('submit', async (e) => {
     results = results.filter((r) => r.syncedLyrics || r.plainLyrics);
     results.sort((a, b) => (b.syncedLyrics ? 1 : 0) - (a.syncedLyrics ? 1 : 0));
     status.textContent = results.length ? results.length + ' found. Tap one to preview.' : 'Nothing found. Try fewer words, or paste the lyrics yourself.';
-    for (const r of results.slice(0, 30)) {
+    results.slice(0, 30).forEach((r, i) => {
       const li = el('li');
+      li.style.setProperty('--i', Math.min(i, 14));
       const m = el('div', 'meta');
       m.append(el('div', 't', r.trackName), el('div', 'a', [r.artistName, r.albumName, r.duration ? fmtTime(r.duration) : ''].filter(Boolean).join(' · ')));
       li.appendChild(m);
       li.appendChild(el('span', r.syncedLyrics ? 'badge synced' : 'badge', r.syncedLyrics ? 'Synced' : 'Words only'));
       li.onclick = () => previewResult(r);
+      if (i === 0) {
+        // the best match blooms open: a few lines to recognise it, and a way to add it straight away
+        li.classList.add('bloom');
+        const plain = (r.plainLyrics || (r.syncedLyrics || '').replace(/^\s*\[[^\]]*\]\s?/gm, '')).split('\n').map((x) => x.trim()).filter(Boolean).slice(0, 3);
+        const pv = el('div', 'bloom-lines');
+        plain.forEach((line) => pv.appendChild(el('div', null, line)));
+        const add = el('button', 'btn primary', 'Add to library');
+        add.type = 'button';
+        add.onclick = (e) => { e.stopPropagation(); saveResult(r); };
+        li.append(pv, add);
+      }
       list.appendChild(li);
-    }
+    });
+    list.classList.add('strung');
   } catch (err) {
     status.textContent = navigator.onLine === false
       ? 'You are offline. Search needs internet, but your saved songs still work.'

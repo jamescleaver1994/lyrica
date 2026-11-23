@@ -53,7 +53,7 @@
   <!-- LIBRARY -->
   <section id="view-library" class="view tabbed" hidden>
     <header class="bar brand-bar">
-      <div class="brand"><span class="brand-mark"></span>Lyrica</div>
+      <h1 class="tab-title">Library</h1>
       <button class="icon-btn" data-go="#/edit/new" aria-label="Add your own lyrics"><svg><use href="#i-plus"/></svg></button>
     </header>
     <div class="content">
@@ -92,7 +92,7 @@
     <header class="bar brand-bar"><h1 class="tab-title">Find</h1></header>
     <div class="content">
       <form id="search-form" class="stack">
-        <input id="search-track" class="input" placeholder="Song title" autocomplete="off" required>
+        <div class="search-field"><svg aria-hidden="true"><use href="#i-search"/></svg><input id="search-track" class="input" placeholder="Song title" autocomplete="off" required></div>
         <input id="search-artist" class="input" placeholder="Artist (optional)" autocomplete="off">
         <button class="btn primary" type="submit"><svg><use href="#i-search"/></svg>Search lyrics</button>
       </form>
@@ -100,7 +100,7 @@
       <ul id="search-results" class="list results"></ul>
       <div class="card-note">
         <div class="grow"><b>Got your own lyrics or chords?</b><div class="muted small">Paste them in and Lyrica will pace them for you.</div></div>
-        <button class="btn small" data-go="#/edit/new">Paste</button>
+        <button class="btn small" data-go="#/edit/new">Paste my own</button>
       </div>
       <p class="muted small">Lyrics come from LRCLIB, a free open lyrics library. Synced songs scroll in time with the original recording.</p>
     </div>
