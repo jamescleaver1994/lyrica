@@ -4,9 +4,10 @@
  */
 'use strict';
 
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '1.2.0';
 const LRCLIB = 'https://lrclib.net/api';
 const ITUNES = 'https://itunes.apple.com/search';
+const DEEZER = 'https://api.deezer.com';
 
 /* ---------------- helpers ---------------- */
 const $ = (sel) => document.querySelector(sel);
@@ -115,8 +116,17 @@ const store = {
   },
 };
 
-const DEFAULT_SETTINGS = { fontSize: 28, resumeDelay: 3, countIn: 3, showChords: true, keepAwake: true, motion: true, covers: true };
+const DEFAULT_SETTINGS = {
+  fontSize: 28, resumeDelay: 3, countIn: '1bar', clickSound: true, autoBpm: true, metroOn: false,
+  showChords: true, keepAwake: true, motion: true, covers: true, libView: 'songs', libSort: 'recent',
+};
 let settings = Object.assign({}, DEFAULT_SETTINGS, store.get('lyrica.settings', {}));
+if (!settings.v120) { // one-off upgrade: move the old 3 second default to an on-beat count-in
+  if (settings.countIn === 3) settings.countIn = '1bar';
+  settings.countIn = String(settings.countIn);
+  settings.v120 = true;
+  store.set('lyrica.settings', settings);
+}
 function saveSettings() { store.set('lyrica.settings', settings); applySettings(); }
 function applySettings() {
   document.documentElement.style.setProperty('--lyric-size', settings.fontSize + 'px');
@@ -228,8 +238,10 @@ function revisitList() {
 const coverQueue = [];
 let coverBusy = false;
 function needsCover(song) { return settings.covers && song.art === undefined && (song.title || '').trim(); }
+function needsBpm(song) { return settings.autoBpm && song.bpm === undefined && (song.title || '').trim(); }
+function queueEnrich(song) { if (needsCover(song) || needsBpm(song)) queueCover(song); }
 function queueCover(song) {
-  if (!needsCover(song) || coverQueue.includes(song.id)) return;
+  if ((!needsCover(song) && !needsBpm(song)) || coverQueue.includes(song.id)) return;
   coverQueue.push(song.id);
   runCoverQueue();
 }
@@ -246,6 +258,15 @@ async function runCoverQueue() {
       document.querySelectorAll('[data-cover="' + song.id + '"]').forEach((n) => paintCover(n, song));
       document.querySelectorAll('[data-dur="' + song.id + '"]').forEach((n) => (n.textContent = songSubtitle(song)));
     } catch { /* offline or blocked: try again next launch */ }
+  }
+  if (song && needsBpm(song)) {
+    try {
+      const bpm = await lookupBpm(song.title, song.artist);
+      song.bpm = bpm || null;
+      if (bpm) song.bpmSource = 'deezer';
+      upsertSong(song);
+      if (player.song && player.song.id === song.id) player.tempoChanged();
+    } catch { /* try again next launch */ }
   }
   coverBusy = false;
   setTimeout(runCoverQueue, 350);
@@ -268,6 +289,19 @@ async function lookupCover(title, artist) {
     || null;
   if (!best || !best.artworkUrl100) return null;
   return { art: best.artworkUrl100.replace(/\/\d+x\d+bb\./, '/300x300bb.'), duration: best.trackTimeMillis ? Math.round(best.trackTimeMillis / 1000) : null };
+}
+/* Song tempo from Deezer's free API. It has no CORS support, so it is read with JSONP.
+ * Deezer returns 0 when it does not know the tempo; we then leave it for tap tempo or manual entry. */
+async function lookupBpm(title, artist) {
+  const q = artist ? 'artist:"' + artist + '" track:"' + title + '"' : title;
+  const found = await jsonp(DEEZER + '/search?' + new URLSearchParams({ q, limit: '5', output: 'jsonp' }));
+  const norm = (x) => String(x || '').toLowerCase().replace(/\(.*?\)|\[.*?\]|feat\..*|[^a-z0-9]/g, '');
+  const hits = (found && found.data) || [];
+  const hit = hits.find((r) => norm(r.title) === norm(title)) || hits[0];
+  if (!hit) return null;
+  const track = await jsonp(DEEZER + '/track/' + hit.id + '?output=jsonp');
+  const bpm = track && Math.round(track.bpm || 0);
+  return bpm >= 30 && bpm <= 300 ? bpm : null;
 }
 function jsonp(url) {
   return new Promise((resolve, reject) => {
@@ -455,10 +489,14 @@ function buildTimeline(parsed, song) {
 }
 
 /* ---------------- router ---------------- */
-const views = ['library', 'search', 'edit', 'settings', 'player'];
+const views = ['library', 'folder', 'search', 'practice', 'edit', 'settings', 'player'];
+const TAB_OF = { library: 'library', folder: 'library', search: 'search', practice: 'practice', settings: 'settings' };
 function show(name) {
   for (const v of views) $('#view-' + v).hidden = v !== name;
   document.documentElement.classList.toggle('in-player', name === 'player');
+  $('#tabbar').classList.toggle('hide', !TAB_OF[name]);
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === TAB_OF[name]));
+  $('#alpha-rail').hidden = true;
   if (name !== 'player') window.scrollTo(0, 0);
 }
 document.addEventListener('click', (e) => {
@@ -470,45 +508,17 @@ function route() {
   const h = location.hash.replace(/^#\/?/, '');
   const [name, id, extra] = h.split('/');
   if (name !== 'play') player.leave();
-  if (name === 'search') { show('search'); setTimeout(() => $('#search-track').focus(), 50); }
+  if (name === 'search') show('search');
+  else if (name === 'practice') openPractice();
   else if (name === 'edit') openEditor(id);
   else if (name === 'settings') openSettings();
   else if (name === 'play' && getSong(id)) player.open(getSong(id), extra && getFolder(extra) ? extra : null);
-  else openLibrary(name === 'folder' && getFolder(id) ? id : null);
+  else if (name === 'folder' && getFolder(id)) openFolder(id);
+  else openLibrary();
 }
 window.addEventListener('hashchange', route);
 
-/* ---------------- library ---------------- */
-let libFolder = null;
-let reorderMode = false;
-
-function openLibrary(folderId) {
-  if (folderId !== libFolder) reorderMode = false;
-  libFolder = folderId;
-  show('library');
-  renderLibrary();
-}
-
-function renderChips() {
-  const box = $('#folder-chips');
-  box.innerHTML = '';
-  const mk = (label, active, onClick, cls) => {
-    const c = el('button', 'chip' + (active ? ' active' : '') + (cls ? ' ' + cls : ''));
-    c.type = 'button';
-    if (cls === 'add') c.appendChild(svgIcon('plus'));
-    c.appendChild(document.createTextNode(label));
-    c.onclick = onClick;
-    box.appendChild(c);
-    return c;
-  };
-  mk('All songs', !libFolder, () => (location.hash = '#/'));
-  for (const f of folders) mk(f.name, libFolder === f.id, () => (location.hash = '#/folder/' + f.id));
-  mk('New folder', false, () => askText('New folder', 'Name, e.g. "Friday setlist" or "Acoustic"', '', (name) => {
-    const f = createFolder(name);
-    location.hash = '#/folder/' + f.id;
-  }), 'add');
-}
-
+/* ---------------- shared song tiles ---------------- */
 function comfortRow(song, compact) {
   const c = comfortOf(song);
   const row = el('div', 'comfort');
@@ -530,7 +540,7 @@ function songTile(song, opts = {}) {
   const li = el('li');
   li.appendChild(coverNode(song));
   const m = el('div', 'meta');
-  const sub = el('div', 'a', songSubtitle(song));
+  const sub = el('div', 'a', opts.hideArtist ? (song.duration ? fmtTime(song.duration) : '') : songSubtitle(song));
   sub.dataset.dur = song.id;
   m.append(el('div', 't', song.title || 'Untitled'), sub, comfortRow(song));
   li.appendChild(m);
@@ -549,71 +559,222 @@ function songTile(song, opts = {}) {
     const more = iconBtn('more', 'Song options');
     more.onclick = (e) => { e.stopPropagation(); openSongSheet(song); };
     li.appendChild(more);
-    li.onclick = () => (location.hash = '#/play/' + song.id + (libFolder ? '/' + libFolder : ''));
+    li.onclick = () => (location.hash = '#/play/' + song.id + (opts.folderId ? '/' + opts.folderId : ''));
   }
-  queueCover(song);
+  queueEnrich(song);
   return li;
 }
 
-function moveInFolder(i, dir) {
-  const f = getFolder(libFolder);
-  const j = i + dir;
-  if (!f || j < 0 || j >= f.songIds.length) return;
-  [f.songIds[i], f.songIds[j]] = [f.songIds[j], f.songIds[i]];
-  saveFolders();
+/* ---------------- library: songs / artists / folders ---------------- */
+const SORTS = {
+  recent: { label: 'Recently played', short: 'Recent', fn: (a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0) || (b.created || 0) - (a.created || 0) },
+  plays: { label: 'Most played', short: 'Most played', fn: (a, b) => (b.plays || 0) - (a.plays || 0) || (b.lastPlayed || 0) - (a.lastPlayed || 0) },
+  comfort: { label: 'Needs the most practice', short: 'Comfort', fn: (a, b) => comfortSortKey(a) - comfortSortKey(b) || byTitle(a, b) },
+  title: { label: 'Title, A to Z', short: 'A to Z', fn: (a, b) => byTitle(a, b), letters: (s) => s.title },
+  artist: { label: 'Artist, A to Z', short: 'Artist', fn: (a, b) => byArtist(a, b) || byTitle(a, b), letters: (s) => s.artist },
+  added: { label: 'Recently added', short: 'Added', fn: (a, b) => (b.created || 0) - (a.created || 0) },
+};
+const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+const sortName = (s) => String(s || '').trim().replace(/^the\s+/i, '');
+const byTitle = (a, b) => collator.compare(sortName(a.title), sortName(b.title));
+const byArtist = (a, b) => collator.compare(sortName(a.artist) || '￿', sortName(b.artist) || '￿');
+function comfortSortKey(s) { const c = comfortOf(s); return c ? c.score + (c.slip >= SLIP_THRESHOLD ? -100 : 0) : 1000; }
+function letterOf(str) {
+  const ch = sortName(str).charAt(0).toUpperCase();
+  return /[A-Z]/.test(ch) ? ch : '#';
+}
+const BIG_LIST = 20;
+
+function openLibrary() {
+  show('library');
   renderLibrary();
 }
 
-function renderRevisit() {
-  const list = revisitList();
-  $('#revisit').hidden = !list.length || !!libFolder;
-  const box = $('#revisit-list');
+function renderLibrary() {
+  const view = settings.libView;
+  document.querySelectorAll('#lib-views button').forEach((b) => {
+    b.classList.toggle('active', b.dataset.view === view);
+    b.setAttribute('aria-selected', b.dataset.view === view);
+  });
+  $('#lib-sort').hidden = view === 'folders';
+  $('#lib-sort-label').textContent = SORTS[settings.libSort].short;
+  $('#lib-filter').placeholder = view === 'folders' ? 'Filter folders' : view === 'artists' ? 'Filter artists or songs' : 'Filter songs';
+  $('#lib-filter').parentElement.hidden = view !== 'folders' && songs.length === 0;
+  const box = $('#lib-list');
   box.innerHTML = '';
-  $('#revisit-sub').textContent = list.length === 1 ? '1 song slipping' : list.length + ' songs slipping';
-  for (const s of list) {
-    const card = el('div', 'rcard');
-    card.append(coverNode(s), el('div', 't', s.title), el('div', 'a', s.artist || ''), comfortRow(s, true));
-    card.onclick = () => (location.hash = '#/play/' + s.id);
-    box.appendChild(card);
+  const q = $('#lib-filter').value.trim().toLowerCase();
+  const match = (s) => !q || (s.title + ' ' + (s.artist || '')).toLowerCase().includes(q);
+  const empty = $('#lib-empty');
+  empty.hidden = true;
+  let letters = null;
+
+  if (view === 'folders') {
+    const newBtn = el('button', 'btn');
+    newBtn.type = 'button';
+    newBtn.append(svgIcon('plus'), document.createTextNode('New folder'));
+    newBtn.onclick = () => askText('New folder', 'Name, e.g. "Friday setlist" or "Acoustic"', '', (name) => (location.hash = '#/folder/' + createFolder(name).id));
+    box.appendChild(newBtn);
+    const ul = el('ul', 'list');
+    for (const f of folders.filter((f) => !q || f.name.toLowerCase().includes(q))) {
+      const list = f.songIds.map(getSong).filter(Boolean);
+      const total = list.reduce((s, x) => s + (x.duration || 0), 0);
+      const li = el('li', 'folder-tile');
+      const cov = el('div', 'cover');
+      const firstArt = list.find((x) => x.art);
+      if (firstArt) paintCover(cov, firstArt); else cov.appendChild(svgIcon('folder'));
+      const m = el('div', 'meta');
+      m.append(el('div', 't', f.name), el('div', 'a', list.length + (list.length === 1 ? ' song' : ' songs') + (total ? ' · ' + fmtTotal(total) : '')));
+      li.append(cov, m, svgIcon('chevron'));
+      li.onclick = () => (location.hash = '#/folder/' + f.id);
+      ul.appendChild(li);
+    }
+    box.appendChild(ul);
+    if (!folders.length) { empty.hidden = false; empty.textContent = 'Folders keep setlists, genres or anything else together. A song can be in as many folders as you like.'; }
+  } else if (view === 'artists') {
+    const groups = new Map();
+    for (const s of songs) {
+      const key = (s.artist || '').trim() || 'Unknown artist';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(s);
+    }
+    let names = [...groups.keys()].sort((a, b) => (a === 'Unknown artist') - (b === 'Unknown artist') || collator.compare(sortName(a), sortName(b)));
+    if (q) names = names.filter((n) => n.toLowerCase().includes(q) || groups.get(n).some(match));
+    const big = names.length >= BIG_LIST;
+    let lastLetter = null;
+    letters = new Map();
+    for (const name of names) {
+      const list = groups.get(name).slice().sort(SORTS[settings.libSort].fn);
+      const shownSongs = q && !name.toLowerCase().includes(q) ? list.filter(match) : list;
+      const L = name === 'Unknown artist' ? '#' : letterOf(name);
+      if (big && L !== lastLetter) { const hd = el('div', 'letter-head', L); box.appendChild(hd); letters.set(L, hd); lastLetter = L; }
+      const g = el('div', 'group' + (q || openArtists.has(name) ? ' open' : ''));
+      if (!letters.has(L)) letters.set(L, g);
+      const head = el('div', 'group-head');
+      const cov = el('div', 'cover round');
+      const withArt = list.find((x) => x.art);
+      if (withArt) paintCover(cov, withArt); else cov.appendChild(svgIcon('person'));
+      const total = list.reduce((s, x) => s + (x.duration || 0), 0);
+      const m = el('div', 'meta');
+      m.append(el('div', 't', name), el('div', 'a', list.length + (list.length === 1 ? ' song' : ' songs') + (total ? ' · ' + fmtTotal(total) : '')));
+      const chev = svgIcon('chevron');
+      chev.classList.add('chev');
+      head.append(cov, m, chev);
+      const ul = el('ul', 'list');
+      const fill = () => { ul.innerHTML = ''; shownSongs.forEach((s) => ul.appendChild(songTile(s, { hideArtist: true }))); };
+      if (g.classList.contains('open')) fill();
+      head.onclick = () => {
+        const open = g.classList.toggle('open');
+        if (open) { openArtists.add(name); fill(); } else { openArtists.delete(name); ul.innerHTML = ''; }
+      };
+      g.append(head, ul);
+      box.appendChild(g);
+    }
+    if (!big) letters = null;
+    if (!names.length) { empty.hidden = false; empty.textContent = songs.length ? 'No artists match that filter.' : 'No songs yet. Use Find to look one up, or the plus button to paste your own.'; }
+  } else {
+    const sort = SORTS[settings.libSort];
+    const list = songs.filter(match).sort(sort.fn);
+    const big = sort.letters && list.length >= BIG_LIST;
+    const ul = el('ul', 'list');
+    box.appendChild(ul);
+    if (big) letters = new Map();
+    let lastLetter = null;
+    for (const s of list) {
+      if (big) {
+        const L = letterOf(sort.letters(s));
+        if (L !== lastLetter) { const hd = el('li', 'letter-head', L); ul.appendChild(hd); letters.set(L, hd); lastLetter = L; }
+      }
+      ul.appendChild(songTile(s));
+    }
+    if (!list.length) { empty.hidden = false; empty.textContent = songs.length ? 'No songs match that filter.' : 'No songs yet. Use Find to look one up, or the plus button to paste your own.'; }
   }
+  renderAlphaRail(letters);
+}
+const openArtists = new Set();
+
+/* A to Z jump bar for big lists: tap or slide a finger down it */
+function renderAlphaRail(letters) {
+  const rail = $('#alpha-rail');
+  rail.innerHTML = '';
+  rail.hidden = !letters || letters.size < 4;
+  $('#view-library').classList.toggle('has-rail', !rail.hidden);
+  if (rail.hidden) return;
+  const all = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
+  for (const L of all) {
+    const sp = el('span', letters.has(L) ? '' : 'off', L);
+    sp.dataset.l = L;
+    rail.appendChild(sp);
+  }
+  const jump = (y) => {
+    const spans = [...rail.children];
+    const hit = spans.find((sp) => { const r = sp.getBoundingClientRect(); return y >= r.top && y <= r.bottom; });
+    if (!hit) return;
+    // nearest available letter at or after the touched one
+    const i = all.indexOf(hit.dataset.l);
+    const L = all.slice(i).find((x) => letters.has(x)) || [...letters.keys()].pop();
+    const target = letters.get(L);
+    if (target) target.scrollIntoView({ block: 'start' });
+  };
+  rail.onpointerdown = (e) => { rail.setPointerCapture(e.pointerId); jump(e.clientY); };
+  rail.onpointermove = (e) => { if (e.buttons || e.pointerType === 'touch') jump(e.clientY); };
 }
 
-function renderLibrary() {
-  renderChips();
-  renderRevisit();
-  const folder = libFolder ? getFolder(libFolder) : null;
-  $('#folder-head').hidden = !folder;
-  const q = $('#lib-filter').value.trim().toLowerCase();
-  let shown;
-  if (folder) {
-    shown = folder.songIds.map(getSong).filter(Boolean);
-    $('#folder-name').textContent = folder.name;
-    const total = shown.reduce((s, x) => s + (x.duration || 0), 0);
-    $('#folder-meta').textContent = shown.length + (shown.length === 1 ? ' song' : ' songs') + (total ? ' · ' + fmtTotal(total) : '');
-    $('#folder-reorder').textContent = reorderMode ? 'Done' : 'Reorder';
-    $('#folder-reorder').hidden = shown.length < 2;
-  } else {
-    shown = songs.slice().sort((a, b) => (b.lastPlayed || b.updated || 0) - (a.lastPlayed || a.updated || 0));
-  }
-  const pool = shown;
-  if (q && !reorderMode) shown = shown.filter((s) => (s.title + ' ' + (s.artist || '')).toLowerCase().includes(q));
-  const list = $('#lib-list');
-  list.innerHTML = '';
-  shown.forEach((s, i) => list.appendChild(songTile(s, { reorder: reorderMode && folder, index: i, count: shown.length })));
-  $('#lib-filter').hidden = pool.length < 6 || reorderMode;
-  const empty = $('#lib-empty');
-  empty.hidden = pool.length > 0;
-  empty.textContent = folder
-    ? 'This folder is empty. Use the options button on any song to add it here.'
-    : 'No songs yet. Find one online or paste your own lyrics to get started.';
-}
 $('#lib-filter').addEventListener('input', renderLibrary);
-$('#folder-reorder').onclick = () => { reorderMode = !reorderMode; renderLibrary(); };
+document.querySelectorAll('#lib-views button').forEach((b) => (b.onclick = () => { settings.libView = b.dataset.view; saveSettings(); renderLibrary(); }));
+$('#lib-sort').onclick = () => {
+  const body = el('div', 'levels');
+  for (const [key, s] of Object.entries(SORTS)) {
+    const b = el('button', 'level' + (settings.libSort === key ? ' active' : ''));
+    b.type = 'button';
+    b.append(el('span', 'grow', s.label));
+    if (settings.libSort === key) b.appendChild(svgIcon('check'));
+    b.onclick = () => { settings.libSort = key; saveSettings(); closeModal(); renderLibrary(); };
+    body.appendChild(b);
+  }
+  openModal('Sort songs by', body);
+};
+
+/* ---------------- folder detail ---------------- */
+let currentFolder = null;
+let reorderMode = false;
+function openFolder(id) {
+  if (id !== currentFolder) reorderMode = false;
+  currentFolder = id;
+  show('folder');
+  renderFolder();
+}
+function renderFolder() {
+  const f = getFolder(currentFolder);
+  if (!f) return;
+  const list = f.songIds.map(getSong).filter(Boolean);
+  const total = list.reduce((s, x) => s + (x.duration || 0), 0);
+  $('#folder-name').textContent = f.name;
+  $('#folder-meta').textContent = list.length + (list.length === 1 ? ' song' : ' songs') + (total ? ' · ' + fmtTotal(total) : '');
+  $('#folder-reorder').textContent = reorderMode ? 'Done' : 'Reorder';
+  $('#folder-reorder').hidden = list.length < 2;
+  const ul = $('#folder-list');
+  ul.innerHTML = '';
+  list.forEach((s, i) => ul.appendChild(songTile(s, { reorder: reorderMode, index: i, count: list.length, folderId: f.id })));
+  $('#folder-empty').hidden = list.length > 0;
+}
+function moveInFolder(i, dir) {
+  const f = getFolder(currentFolder);
+  if (!f) return;
+  const ids = f.songIds.filter((x) => getSong(x));
+  const j = i + dir;
+  if (j < 0 || j >= ids.length) return;
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  f.songIds = ids;
+  saveFolders();
+  renderFolder();
+}
+$('#folder-back').onclick = () => { settings.libView = 'folders'; saveSettings(); location.hash = '#/'; };
+$('#folder-reorder').onclick = () => { reorderMode = !reorderMode; renderFolder(); };
 $('#folder-menu').onclick = () => {
-  const f = getFolder(libFolder);
+  const f = getFolder(currentFolder);
   if (!f) return;
   openModal(f.name, f.songIds.length + ' songs. Deleting a folder keeps the songs in your library.', [
-    { label: 'Rename', run: () => askText('Rename folder', 'Name', f.name, (name) => { f.name = name; saveFolders(); renderLibrary(); }) },
+    { label: 'Rename', run: () => askText('Rename folder', 'Name', f.name, (name) => { f.name = name; saveFolders(); renderFolder(); }) },
     { label: 'Delete folder', danger: true, run: () => {
       if (!confirm('Delete the folder "' + f.name + '"? Songs stay in your library.')) return;
       folders = folders.filter((x) => x.id !== f.id);
@@ -622,6 +783,34 @@ $('#folder-menu').onclick = () => {
     } },
   ]);
 };
+
+/* ---------------- practice ---------------- */
+function openPractice() {
+  show('practice');
+  const list = revisitList();
+  const ul = $('#revisit-list');
+  ul.innerHTML = '';
+  list.forEach((s) => ul.appendChild(songTile(s)));
+  $('#revisit-empty').hidden = list.length > 0;
+  $('#revisit-sub').textContent = list.length ? (list.length === 1 ? '1 song' : list.length + ' songs') : '';
+  const counts = LEVELS.map(() => 0);
+  let unrated = 0;
+  for (const s of songs) { const c = comfortOf(s); if (c) counts[c.level]++; else unrated++; }
+  const max = Math.max(1, ...counts, unrated);
+  const box = $('#comfort-summary');
+  box.innerHTML = '';
+  const row = (label, n) => {
+    const r = el('div', 'cs-row');
+    const bar = el('div', 'bar');
+    const i = el('i');
+    i.style.width = (n / max) * 100 + '%';
+    bar.appendChild(i);
+    r.append(el('span', null, label), bar, el('span', 'n', String(n)));
+    box.appendChild(r);
+  };
+  for (let k = LEVELS.length - 1; k >= 0; k--) row(LEVELS[k].label, counts[k]);
+  row('Not rated', unrated);
+}
 
 /* Song options: comfort level, folders, edit, delete */
 function levelPicker(current, onPick) {
@@ -673,8 +862,10 @@ function openSongSheet(song) {
   });
   fo.appendChild(nf);
   body.appendChild(fo);
+  const stats = [song.plays ? song.plays + (song.plays === 1 ? ' play' : ' plays') : 'Not played yet', song.bpm ? song.bpm + ' BPM' : ''].filter(Boolean).join(' · ');
+  body.appendChild(el('div', 'muted small', stats));
   openModal(song.title || 'Song', body, [
-    { label: 'Edit lyrics', run: () => (location.hash = '#/edit/' + song.id) },
+    { label: 'Edit song', run: () => (location.hash = '#/edit/' + song.id) },
     { label: 'Delete', danger: true, run: () => {
       if (!confirm('Delete "' + song.title + '"? This cannot be undone.')) return;
       deleteSong(song.id);
@@ -682,7 +873,11 @@ function openSongSheet(song) {
     } },
   ]);
 }
-function rerender() { if (!$('#view-library').hidden) renderLibrary(); }
+function rerender() {
+  if (!$('#view-library').hidden) renderLibrary();
+  else if (!$('#view-folder').hidden) renderFolder();
+  else if (!$('#view-practice').hidden) openPractice();
+}
 
 /* ---------------- search (LRCLIB) ---------------- */
 $('#search-form').addEventListener('submit', async (e) => {
@@ -736,7 +931,7 @@ function saveResult(r) {
       duration: r.duration ? Math.round(r.duration) : null, lyrics: r.syncedLyrics || r.plainLyrics, speed: 1, source: 'lrclib', created: Date.now(),
     };
     upsertSong(song);
-    queueCover(song);
+    queueEnrich(song);
     toast('Saved to your songs');
   }
   location.hash = '#/play/' + song.id;
@@ -752,11 +947,13 @@ function openEditor(id) {
   $('#edit-title').value = editing.title || '';
   $('#edit-artist').value = editing.artist || '';
   $('#edit-duration').value = editing.duration ? fmtTime(editing.duration) : '';
+  $('#edit-bpm').value = editing.bpm || '';
+  $('#edit-bpb').value = String(editing.beatsPerBar || 4);
   $('#edit-lyrics').value = editing.lyrics || '';
   editDirty = false;
   show('edit');
 }
-for (const id of ['#edit-title', '#edit-artist', '#edit-duration', '#edit-lyrics']) $(id).addEventListener('input', () => (editDirty = true));
+for (const id of ['#edit-title', '#edit-artist', '#edit-duration', '#edit-bpm', '#edit-bpb', '#edit-lyrics']) $(id).addEventListener('input', () => (editDirty = true));
 $('#edit-back').onclick = () => {
   if (editDirty && !confirm('Discard your changes?')) return;
   editDirty = false;
@@ -769,10 +966,17 @@ $('#edit-save').onclick = () => {
   editing.title = $('#edit-title').value.trim() || lyrics.trim().split('\n')[0].replace(/\[[^\]]*\]/g, '').trim().slice(0, 40) || 'Untitled';
   editing.artist = $('#edit-artist').value.trim();
   editing.duration = parseDuration($('#edit-duration').value);
+  const bpm = Math.round(parseFloat($('#edit-bpm').value));
+  if (bpm >= 30 && bpm <= 300) { if (bpm !== before?.bpm) editing.bpmSource = 'manual'; editing.bpm = bpm; }
+  else if (!$('#edit-bpm').value.trim() && before && before.bpm && before.bpmSource !== 'deezer') { editing.bpm = undefined; }
+  editing.beatsPerBar = +$('#edit-bpb').value || 4;
   editing.lyrics = lyrics;
-  if (!before || before.title !== editing.title || before.artist !== editing.artist) delete editing.art; // look the cover up again
+  if (!before || before.title !== editing.title || before.artist !== editing.artist) {
+    delete editing.art; // look the cover (and tempo, unless set by hand) up again
+    if (editing.bpmSource !== 'manual' && editing.bpmSource !== 'tap') delete editing.bpm;
+  }
   upsertSong(editing);
-  queueCover(editing);
+  queueEnrich(editing);
   editDirty = false;
   toast('Saved');
   location.replace('#/play/' + editing.id);
@@ -784,6 +988,8 @@ function openSettings() {
   $('#set-font-out').textContent = settings.fontSize;
   $('#set-resume').value = String(settings.resumeDelay);
   $('#set-countin').value = String(settings.countIn);
+  $('#set-click').checked = settings.clickSound;
+  $('#set-bpm').checked = settings.autoBpm;
   $('#set-chords').checked = settings.showChords;
   $('#set-wake').checked = settings.keepAwake;
   $('#set-motion').checked = settings.motion;
@@ -793,7 +999,9 @@ function openSettings() {
 }
 $('#set-font').addEventListener('input', (e) => { settings.fontSize = +e.target.value; $('#set-font-out').textContent = settings.fontSize; saveSettings(); });
 $('#set-resume').addEventListener('change', (e) => { settings.resumeDelay = +e.target.value; saveSettings(); });
-$('#set-countin').addEventListener('change', (e) => { settings.countIn = +e.target.value; saveSettings(); });
+$('#set-countin').addEventListener('change', (e) => { settings.countIn = e.target.value; saveSettings(); });
+$('#set-click').addEventListener('change', (e) => { settings.clickSound = e.target.checked; saveSettings(); });
+$('#set-bpm').addEventListener('change', (e) => { settings.autoBpm = e.target.checked; saveSettings(); });
 $('#set-chords').addEventListener('change', (e) => { settings.showChords = e.target.checked; saveSettings(); });
 $('#set-wake').addEventListener('change', (e) => { settings.keepAwake = e.target.checked; saveSettings(); });
 $('#set-motion').addEventListener('change', (e) => { settings.motion = e.target.checked; saveSettings(); });
@@ -879,6 +1087,67 @@ function lineNode(l, i) {
   return d;
 }
 
+/* ---------------- metronome (Web Audio clicks, scheduled ahead for steady timing) ---------------- */
+const metro = {
+  ctx: null,
+  timer: null,
+  next: 0,
+  beat: 0,
+  bpm: 120,
+  bpb: 4,
+  ensure() {
+    try {
+      if (!this.ctx) { const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null; this.ctx = new AC(); }
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      return this.ctx;
+    } catch { return null; }
+  },
+  click(at, accent) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.value = accent ? 1760 : 1175;
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(accent ? 0.9 : 0.55, at + 0.002);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + 0.06);
+    o.connect(g).connect(ctx.destination);
+    o.start(at);
+    o.stop(at + 0.08);
+  },
+  flash(at, accent) {
+    const delay = Math.max(0, (at - this.ctx.currentTime) * 1000);
+    setTimeout(() => {
+      const d = $('#p-beat');
+      d.classList.add('on');
+      d.classList.toggle('accent', accent);
+      setTimeout(() => d.classList.remove('on', 'accent'), 110);
+    }, delay);
+  },
+  start(bpm, bpb, firstAt) {
+    this.stop();
+    if (!this.ensure()) return;
+    this.bpm = bpm;
+    this.bpb = bpb;
+    this.next = Math.max(firstAt || 0, this.ctx.currentTime + 0.05);
+    this.beat = 0;
+    this.timer = setInterval(() => this.tick(), 25);
+    this.tick();
+  },
+  tick() {
+    while (this.next < this.ctx.currentTime + 0.12) {
+      const accent = this.beat % this.bpb === 0;
+      this.click(this.next, accent);
+      this.flash(this.next, accent);
+      this.next += 60 / this.bpm;
+      this.beat++;
+    }
+  },
+  stop() { clearInterval(this.timer); this.timer = null; },
+  get running() { return !!this.timer; },
+};
+
 /* ---------------- player ---------------- */
 const ANCHOR = 0.38; // where the current line sits, as a share of the lyric area height
 
@@ -893,7 +1162,9 @@ const player = {
   manualUntil: 0,
   touching: false,
   cur: -1,
-  countdownEnd: 0,
+  countIn: null,
+  taps: [],
+  playCounted: false,
   timing: null, // tap-to-time state
   raf: 0,
 
@@ -905,7 +1176,8 @@ const player = {
     this.playing = false;
     this.manualUntil = 0;
     this.cur = -1;
-    this.countdownEnd = 0;
+    this.countIn = null;
+    this.playCounted = false;
     this.stopTiming(true);
     $('#p-title').textContent = song.title;
     $('#p-artist').textContent = song.artist || '';
@@ -916,6 +1188,7 @@ const player = {
     this.synced = parsed.synced;
     this.useTimeline(buildTimeline(parsed, song));
     wake.on();
+    this.tempoChanged();
     this.updateUi();
     this.lastFrame = performance.now();
     cancelAnimationFrame(this.raf);
@@ -983,14 +1256,16 @@ const player = {
     if (this.t >= this.tl.end - 0.1) { this.t = 0; this.maxT = 0; }
     this.playing = true;
     this.manualUntil = 0;
-    if (settings.countIn > 0 && this.t < 0.05 && !this.timing) this.countdownEnd = performance.now() + settings.countIn * 1000;
+    if (this.t < 0.05 && !this.timing) this.startCountIn();
+    if (!this.countIn) this.startMetro();
     this.lastFrame = performance.now();
     wake.on();
     this.updateUi();
   },
   pause() {
     this.playing = false;
-    this.countdownEnd = 0;
+    this.countIn = null;
+    metro.stop();
     $('#p-countdown').hidden = true;
     this.updateUi();
   },
@@ -1000,7 +1275,8 @@ const player = {
     this.maxT = 0;
     this.manualUntil = 0;
     this.cur = -2;
-    if (this.playing) { this.playing = false; this.play(); }
+    this.playCounted = false;
+    if (this.playing) { this.pause(); this.play(); }
     this.updateUi();
   },
   seekToLine(i) {
@@ -1013,7 +1289,58 @@ const player = {
   setSpeed(v) {
     this.song.speed = Math.round(clamp(v, 0.5, 2) * 100) / 100;
     upsertSong(this.song);
+    if (metro.running && this.song.bpm) metro.bpm = this.song.bpm * this.song.speed;
     this.updateUi();
+  },
+  /* Count-in: on the beat when the song has a tempo, otherwise a plain seconds countdown. */
+  startCountIn() {
+    const mode = String(settings.countIn);
+    if (mode === '0') return;
+    const bpb = this.song.beatsPerBar || 4;
+    let beats, beatSec, accentEvery;
+    if (/bar$/.test(mode) && this.song.bpm) {
+      beats = bpb * parseInt(mode, 10);
+      beatSec = 60 / (this.song.bpm * (this.song.speed || 1));
+      accentEvery = bpb;
+    } else {
+      beats = /bar$/.test(mode) ? 3 : +mode;
+      beatSec = 1;
+      accentEvery = 1000;
+    }
+    const lead = 0.08;
+    this.countIn = { start: performance.now() + lead * 1000, beatMs: beatSec * 1000, beats, shown: -1, bpb, audioEnd: 0 };
+    if (settings.clickSound && metro.ensure()) {
+      const t0 = metro.ctx.currentTime + lead;
+      for (let i = 0; i < beats; i++) metro.click(t0 + i * beatSec, i % accentEvery === 0);
+      this.countIn.audioEnd = t0 + beats * beatSec;
+    }
+  },
+  startMetro(firstAt) {
+    if (!settings.metroOn || !this.song.bpm || this.timing) return;
+    metro.start(this.song.bpm * (this.song.speed || 1), this.song.beatsPerBar || 4, firstAt);
+  },
+  tempoChanged() {
+    const bpm = this.song && this.song.bpm;
+    // the background glow breathes once every two bars when the tempo is known
+    $('#view-player').style.setProperty('--breathe', bpm ? clamp((60 / bpm) * 8, 4, 14).toFixed(2) + 's' : '9s');
+    if (metro.running && bpm) metro.bpm = bpm * (this.song.speed || 1);
+    this.updateUi();
+  },
+  setBpm(bpm, source) {
+    this.song.bpm = Math.round(clamp(bpm, 30, 300));
+    this.song.bpmSource = source;
+    upsertSong(this.song);
+    this.tempoChanged();
+  },
+  tapTempo() {
+    const now = performance.now();
+    if (this.taps.length && now - this.taps[this.taps.length - 1] > 2000) this.taps = [];
+    this.taps.push(now);
+    this.taps = this.taps.slice(-8);
+    if (this.taps.length >= 3) {
+      const gaps = this.taps.slice(1).map((t, i) => t - this.taps[i]);
+      this.setBpm(60000 / (gaps.reduce((a, b) => a + b, 0) / gaps.length), 'tap');
+    } else toast('Keep tapping on the beat');
   },
   updateUi() {
     const btn = $('#p-play');
@@ -1021,7 +1348,11 @@ const player = {
     btn.appendChild(svgIcon(this.playing ? 'pause' : 'play'));
     btn.setAttribute('aria-label', this.playing ? 'Pause' : 'Play');
     $('#view-player').classList.toggle('is-playing', this.playing);
-    if (this.song) $('#p-speed').textContent = Math.round((this.song.speed || 1) * 100) + '%';
+    if (!this.song) return;
+    $('#p-speed').textContent = Math.round((this.song.speed || 1) * 100) + '%';
+    $('#p-bpm').textContent = this.song.bpm ? this.song.bpm + ' BPM' : 'No tempo';
+    $('#p-metro').setAttribute('aria-pressed', String(!!settings.metroOn));
+    $('#p-beat').hidden = !(settings.metroOn && this.song.bpm);
   },
   finished() {
     this.pause();
@@ -1045,14 +1376,34 @@ const player = {
     const dt = Math.min(0.25, (ts - this.lastFrame) / 1000);
     this.lastFrame = ts;
     const cd = $('#p-countdown');
-    if (this.playing && this.countdownEnd) {
-      const left = Math.ceil((this.countdownEnd - ts) / 1000);
-      if (left > 0) { cd.hidden = false; cd.textContent = left; }
-      else { this.countdownEnd = 0; cd.hidden = true; }
+    const ci = this.countIn;
+    if (this.playing && ci) {
+      const idx = Math.floor((ts - ci.start) / ci.beatMs);
+      if (idx < ci.beats) {
+        const left = ci.beats - Math.max(0, idx);
+        if (left !== ci.shown) {
+          ci.shown = left;
+          cd.hidden = false;
+          cd.textContent = left;
+          cd.classList.remove('beat');
+          void cd.offsetWidth; // restart the pop animation on every beat
+          cd.classList.add('beat');
+        }
+      } else {
+        this.countIn = null;
+        cd.hidden = true;
+        this.lastFrame = ts;
+        this.startMetro(ci.audioEnd || 0);
+      }
     }
-    if (this.playing && !this.countdownEnd) {
+    if (this.playing && !this.countIn) {
       this.t += dt * (this.timing ? 1 : this.song.speed || 1);
       this.maxT = Math.max(this.maxT, this.t);
+      if (!this.timing && !this.playCounted && this.maxT >= this.tl.end * 0.5) {
+        this.playCounted = true;
+        this.song.plays = (this.song.plays || 0) + 1;
+        upsertSong(this.song);
+      }
       if (!this.timing && this.t >= this.tl.end) { this.t = this.tl.end; this.finished(); }
     }
     this.paint(dt, ts);
@@ -1116,7 +1467,7 @@ const player = {
   },
   timingTap() {
     if (!this.timing) return;
-    if (!this.playing) { this.playing = true; this.countdownEnd = 0; this.lastFrame = performance.now(); this.updateUi(); }
+    if (!this.playing) { this.playing = true; this.countIn = null; this.lastFrame = performance.now(); this.updateUi(); }
     const o = this.tl.order;
     if (this.timing.next >= o.length) return;
     this.timing.stamps[this.timing.next] = this.t;
@@ -1171,6 +1522,16 @@ $('#p-font-up').onclick = () => changeFont(2);
 $('#p-chords-toggle').onclick = () => { settings.showChords = !settings.showChords; saveSettings(); $('#p-lyrics').classList.toggle('no-chords', !settings.showChords); player.layout(); };
 $('#p-edit').onclick = () => { if (player.song) location.hash = '#/edit/' + player.song.id; };
 $('#p-tap-time').onclick = () => player.startTiming();
+$('#p-metro').onclick = () => {
+  settings.metroOn = !settings.metroOn;
+  saveSettings();
+  if (!player.song.bpm && settings.metroOn) toast('No tempo yet. Tap along or use + and \u2212 to set one.');
+  if (settings.metroOn && player.playing && !player.countIn) player.startMetro(); else if (!settings.metroOn) metro.stop();
+  player.updateUi();
+};
+$('#p-bpm-down').onclick = () => player.setBpm((player.song.bpm || 101) - 1, 'manual');
+$('#p-bpm-up').onclick = () => player.setBpm((player.song.bpm || 99) + 1, 'manual');
+$('#p-tap').onclick = () => { metro.ensure(); player.tapTempo(); };
 $('#p-next').onclick = () => player.goNext();
 $('#t-next').onclick = () => player.timingTap();
 $('#t-cancel').onclick = () => player.stopTiming();

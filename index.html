@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400..700&display=swap">
-  <link rel="stylesheet" href="style.css?v=1.1.1">
+  <link rel="stylesheet" href="style.css?v=1.2.0">
 </head>
 <body>
   <!-- Icon set (inline SVG, no emoji) -->
@@ -37,60 +37,94 @@
       <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-next" viewBox="0 0 24 24"><g fill="currentColor"><path d="M5 6.2v11.6a.8.8 0 001.2.7l8.6-5.8a.8.8 0 000-1.4L6.2 5.5A.8.8 0 005 6.2z"/><rect x="16.5" y="5.5" width="2.5" height="13" rx="1"/></g></symbol>
       <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-library" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="4" height="16" rx="1.2"/><rect x="10" y="4" width="4" height="16" rx="1.2"/><path d="M16.5 5.2l3.3 14.2"/></g></symbol>
+      <symbol id="i-practice" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="7" y="3.5" width="12" height="16" rx="2.5" transform="rotate(8 13 11.5)"/><rect x="4.5" y="5" width="12" height="16" rx="2.5" transform="rotate(-6 10.5 13)"/></g></symbol>
+      <symbol id="i-sort" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5v14M4 16l3 3 3-3M17 19V5M14 8l3-3 3 3"/></g></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-metronome" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3.5h5l4 16.5h-13z"/><path d="M12 15l5-8"/><path d="M8 15h8"/></g></symbol>
+      <symbol id="i-person" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1.2-3.6 4-5.5 7-5.5s5.8 1.9 7 5.5"/></g></symbol>
     </defs>
   </svg>
 
   <div class="grain" aria-hidden="true"></div>
 
   <!-- LIBRARY -->
-  <section id="view-library" class="view" hidden>
+  <section id="view-library" class="view tabbed" hidden>
     <header class="bar brand-bar">
       <div class="brand"><span class="brand-mark"></span>Lyrica</div>
-      <button class="icon-btn" data-go="#/settings" aria-label="Settings"><svg><use href="#i-settings"/></svg></button>
+      <button class="icon-btn" data-go="#/edit/new" aria-label="Add your own lyrics"><svg><use href="#i-plus"/></svg></button>
     </header>
     <div class="content">
-      <div class="row gap">
-        <button class="btn primary grow" data-go="#/search"><svg><use href="#i-search"/></svg>Find a song</button>
-        <button class="btn grow" data-go="#/edit/new"><svg><use href="#i-text"/></svg>Paste lyrics</button>
+      <div class="segmented" id="lib-views" role="tablist" aria-label="Library view">
+        <button type="button" data-view="songs" role="tab">Songs</button>
+        <button type="button" data-view="artists" role="tab">Artists</button>
+        <button type="button" data-view="folders" role="tab">Folders</button>
       </div>
-
-      <section id="revisit" class="revisit" hidden>
-        <div class="section-head"><h2>Worth revisiting</h2><span class="muted small" id="revisit-sub"></span></div>
-        <div id="revisit-list" class="revisit-list"></div>
-      </section>
-
-      <div class="chips" id="folder-chips" role="tablist" aria-label="Folders"></div>
-
-      <div id="folder-head" class="folder-head" hidden>
-        <div class="grow">
-          <h2 id="folder-name"></h2>
-          <div class="muted small" id="folder-meta"></div>
-        </div>
-        <button class="btn small" id="folder-reorder">Reorder</button>
-        <button class="icon-btn" id="folder-menu" aria-label="Folder options"><svg><use href="#i-more"/></svg></button>
+      <div class="row gap lib-tools">
+        <input id="lib-filter" class="input grow" type="search" placeholder="Filter" autocomplete="off">
+        <button class="btn small sort-btn" id="lib-sort" type="button"><svg><use href="#i-sort"/></svg><span id="lib-sort-label">Recent</span></button>
       </div>
-
-      <input id="lib-filter" class="input" type="search" placeholder="Filter songs" autocomplete="off">
-      <ul id="lib-list" class="list"></ul>
+      <div id="lib-list" class="lib-list"></div>
       <p id="lib-empty" class="empty" hidden></p>
+    </div>
+    <nav id="alpha-rail" class="alpha-rail" hidden aria-label="Jump to letter"></nav>
+  </section>
+
+  <!-- FOLDER -->
+  <section id="view-folder" class="view tabbed" hidden>
+    <header class="bar">
+      <button class="icon-btn" id="folder-back" aria-label="Back"><svg><use href="#i-back"/></svg></button>
+      <h1 id="folder-name"></h1>
+      <button class="btn small" id="folder-reorder">Reorder</button>
+      <button class="icon-btn" id="folder-menu" aria-label="Folder options"><svg><use href="#i-more"/></svg></button>
+    </header>
+    <div class="content">
+      <div class="muted small" id="folder-meta"></div>
+      <ul id="folder-list" class="list"></ul>
+      <p id="folder-empty" class="empty" hidden>This folder is empty. Use the options button on any song to add it here.</p>
     </div>
   </section>
 
-  <!-- SEARCH -->
-  <section id="view-search" class="view" hidden>
-    <header class="bar">
-      <button class="icon-btn" data-go="#/" aria-label="Back"><svg><use href="#i-back"/></svg></button>
-      <h1>Find a song</h1>
-    </header>
+  <!-- FIND -->
+  <section id="view-search" class="view tabbed" hidden>
+    <header class="bar brand-bar"><h1 class="tab-title">Find</h1></header>
     <div class="content">
       <form id="search-form" class="stack">
         <input id="search-track" class="input" placeholder="Song title" autocomplete="off" required>
         <input id="search-artist" class="input" placeholder="Artist (optional)" autocomplete="off">
-        <button class="btn primary" type="submit">Search</button>
+        <button class="btn primary" type="submit"><svg><use href="#i-search"/></svg>Search lyrics</button>
       </form>
       <p id="search-status" class="muted"></p>
-      <ul id="search-results" class="list"></ul>
+      <ul id="search-results" class="list results"></ul>
+      <div class="card-note">
+        <div class="grow"><b>Got your own lyrics or chords?</b><div class="muted small">Paste them in and Lyrica will pace them for you.</div></div>
+        <button class="btn small" data-go="#/edit/new">Paste</button>
+      </div>
       <p class="muted small">Lyrics come from LRCLIB, a free open lyrics library. Synced songs scroll in time with the original recording.</p>
+    </div>
+  </section>
+
+  <!-- PRACTICE -->
+  <section id="view-practice" class="view tabbed" hidden>
+    <header class="bar brand-bar"><h1 class="tab-title">Practice</h1></header>
+    <div class="content">
+      <div class="deck-teaser">
+        <div class="deck-stack" aria-hidden="true"><i></i><i></i><i></i></div>
+        <div>
+          <div class="eyebrow">Coming soon</div>
+          <h2>Daily practice deck</h2>
+          <p class="muted small">Five songs picked for you each day. Swipe through them to build a practice habit.</p>
+        </div>
+      </div>
+      <section>
+        <div class="section-head"><h2>Worth revisiting</h2><span class="muted small" id="revisit-sub"></span></div>
+        <ul id="revisit-list" class="list"></ul>
+        <p id="revisit-empty" class="empty" hidden>Nothing is slipping right now. Ratings fade slowly on days you open Lyrica, and songs appear here when they need a refresh.</p>
+      </section>
+      <section>
+        <div class="section-head"><h2>Your songs by comfort</h2></div>
+        <div id="comfort-summary" class="comfort-summary"></div>
+      </section>
     </div>
   </section>
 
@@ -107,6 +141,14 @@
       <label>Song length <span class="muted">(minutes:seconds, paces songs without timings)</span>
         <input id="edit-duration" class="input" placeholder="e.g. 3:45" inputmode="numeric" autocomplete="off">
       </label>
+      <div class="row gap">
+        <label class="grow">Tempo (BPM)
+          <input id="edit-bpm" class="input" placeholder="Looked up automatically" inputmode="numeric" autocomplete="off">
+        </label>
+        <label>Beats per bar
+          <select id="edit-bpb" class="input"><option>2</option><option>3</option><option selected>4</option><option>6</option></select>
+        </label>
+      </div>
       <label>Lyrics
         <textarea id="edit-lyrics" class="input lyrics-input" spellcheck="false" placeholder="Paste lyrics here, one line per line.&#10;&#10;Optional chords go in square brackets before the word:&#10;[G]First line of my [D]song"></textarea>
       </label>
@@ -119,10 +161,9 @@
   </section>
 
   <!-- SETTINGS -->
-  <section id="view-settings" class="view" hidden>
+  <section id="view-settings" class="view tabbed" hidden>
     <header class="bar">
-      <button class="icon-btn" data-go="#/" aria-label="Back"><svg><use href="#i-back"/></svg></button>
-      <h1>Settings</h1>
+      <h1 class="tab-title">Settings</h1>
     </header>
     <div class="content stack">
       <label class="setting">Lyric size
@@ -136,9 +177,14 @@
       </label>
       <label class="setting">Count-in before starting
         <select id="set-countin" class="input">
-          <option value="0">None</option><option value="3">3 seconds</option><option value="5">5 seconds</option>
+          <option value="0">None</option>
+          <option value="1bar">1 bar, on the beat</option><option value="2bar">2 bars, on the beat</option>
+          <option value="3">3 seconds</option><option value="5">5 seconds</option>
         </select>
+        <span class="muted small">On-beat count-ins use the song's tempo. Songs without one fall back to 3 seconds.</span>
       </label>
+      <label class="setting check"><input id="set-click" type="checkbox"> Play a click during the count-in</label>
+      <label class="setting check"><input id="set-bpm" type="checkbox"> Look up song tempo online</label>
       <label class="setting check"><input id="set-chords" type="checkbox"> Show chords</label>
       <label class="setting check"><input id="set-wake" type="checkbox"> Keep screen awake while playing</label>
       <label class="setting check"><input id="set-motion" type="checkbox"> Moving background behind lyrics</label>
@@ -178,7 +224,7 @@
       <div class="progress"><div id="p-progress"></div></div>
       <div class="row ctrl-meta">
         <span id="p-time" class="muted small time">0:00</span>
-        <span id="p-mode" class="badge"></span>
+        <span class="row gap"><i id="p-beat" class="beat-dot" hidden></i><span id="p-mode" class="badge"></span></span>
       </div>
       <div class="row ctrl-row">
         <button class="ctl" id="p-restart" aria-label="Restart"><svg><use href="#i-restart"/></svg></button>
@@ -198,6 +244,13 @@
           <button class="btn small" id="p-font-up" aria-label="Bigger text">A+</button>
           <button class="btn small" id="p-chords-toggle">Chords</button>
         </div>
+        <div class="row gap center metro-row">
+          <button class="btn small toggle" id="p-metro" aria-pressed="false"><svg><use href="#i-metronome"/></svg>Click</button>
+          <button class="btn small" id="p-bpm-down" aria-label="Slower tempo">&minus;</button>
+          <output id="p-bpm" class="strong bpm-out">No tempo</output>
+          <button class="btn small" id="p-bpm-up" aria-label="Faster tempo">+</button>
+          <button class="btn small" id="p-tap">Tap</button>
+        </div>
         <div class="row gap center">
           <button class="btn small" id="p-tap-time"><svg><use href="#i-timer"/></svg>Tap to time</button>
           <button class="btn small" id="p-next" hidden><svg><use href="#i-next"/></svg>Next in folder</button>
@@ -205,6 +258,13 @@
       </div>
     </footer>
   </section>
+
+  <nav id="tabbar" class="tabbar" aria-label="Main">
+    <a class="tab" data-tab="library" href="#/"><span class="tab-ind"><svg><use href="#i-library"/></svg></span><span class="tab-label">Library</span></a>
+    <a class="tab" data-tab="search" href="#/search"><span class="tab-ind"><svg><use href="#i-search"/></svg></span><span class="tab-label">Find</span></a>
+    <a class="tab" data-tab="practice" href="#/practice"><span class="tab-ind"><svg><use href="#i-practice"/></svg></span><span class="tab-label">Practice</span></a>
+    <a class="tab" data-tab="settings" href="#/settings"><span class="tab-ind"><svg><use href="#i-settings"/></svg></span><span class="tab-label">Settings</span></a>
+  </nav>
 
   <div id="modal" class="modal" hidden>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
@@ -233,6 +293,6 @@
       }, 1500);
     });
   </script>
-  <script src="app.js?v=1.1.1"></script>
+  <script src="app.js?v=1.2.0"></script>
 </body>
 </html>
