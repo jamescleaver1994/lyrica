@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400..700&display=swap">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=1.1.1">
 </head>
 <body>
   <!-- Icon set (inline SVG, no emoji) -->
@@ -216,6 +216,23 @@
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="app.js"></script>
+  <script>
+    /* Safety net: if the app fails to start (for example after an update left old files behind),
+       clear the cached app files (never your saved songs) and reload once. */
+    window.__lyricaBoot = false;
+    window.addEventListener('load', function () {
+      setTimeout(function () {
+        if (window.__lyricaBoot) return;
+        var tried = false;
+        try { tried = sessionStorage.getItem('lyrica.recovered') === '1'; sessionStorage.setItem('lyrica.recovered', '1'); } catch (e) {}
+        if (tried) { document.body.insertAdjacentHTML('beforeend', '<p style="padding:24px;color:#e4fde1;font:16px system-ui">Lyrica could not start. Please close the app and open it again.</p>'); return; }
+        var jobs = [];
+        if ('caches' in window) jobs.push(caches.keys().then(function (k) { return Promise.all(k.map(function (n) { return caches.delete(n); })); }));
+        if (navigator.serviceWorker) jobs.push(navigator.serviceWorker.getRegistrations().then(function (r) { return Promise.all(r.map(function (x) { return x.unregister(); })); }));
+        Promise.all(jobs).catch(function () {}).then(function () { location.reload(); });
+      }, 1500);
+    });
+  </script>
+  <script src="app.js?v=1.1.1"></script>
 </body>
 </html>

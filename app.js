@@ -4,7 +4,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.1.1';
 const LRCLIB = 'https://lrclib.net/api';
 const ITUNES = 'https://itunes.apple.com/search';
 
@@ -1195,7 +1195,9 @@ document.addEventListener('keydown', (e) => {
 /* ---------------- boot ---------------- */
 applySettings();
 route();
+window.__lyricaBoot = true;
+try { sessionStorage.removeItem('lyrica.recovered'); } catch {}
 if (document.fonts) document.fonts.ready.then(() => player.song && player.layout());
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
 }
