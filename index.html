@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Lyrica</title>
+  <meta name="description" content="Autoscrolling lyrics and chords for playing along.">
+  <meta name="theme-color" content="#121214">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- LIBRARY -->
+  <section id="view-library" class="view" hidden>
+    <header class="bar">
+      <h1>Lyrica</h1>
+      <button class="icon-btn" data-go="#/settings" aria-label="Settings">⚙︎</button>
+    </header>
+    <div class="content">
+      <div class="row gap">
+        <button class="btn primary grow" data-go="#/search">🔎 Find a song</button>
+        <button class="btn grow" data-go="#/edit/new">✎ Paste lyrics</button>
+      </div>
+      <input id="lib-filter" class="input" type="search" placeholder="Filter my songs…" autocomplete="off">
+      <ul id="lib-list" class="list"></ul>
+      <p id="lib-empty" class="empty" hidden>No songs yet. Find one online or paste your own lyrics to get started.</p>
+    </div>
+  </section>
+
+  <!-- SEARCH -->
+  <section id="view-search" class="view" hidden>
+    <header class="bar">
+      <button class="icon-btn" data-go="#/" aria-label="Back">←</button>
+      <h1>Find a song</h1>
+    </header>
+    <div class="content">
+      <form id="search-form" class="stack">
+        <input id="search-track" class="input" placeholder="Song title" autocomplete="off" required>
+        <input id="search-artist" class="input" placeholder="Artist (optional)" autocomplete="off">
+        <button class="btn primary" type="submit">Search</button>
+      </form>
+      <p id="search-status" class="muted"></p>
+      <ul id="search-results" class="list"></ul>
+      <p class="muted small">Lyrics come from LRCLIB, a free open lyrics library. “Synced” songs scroll in time with the original recording.</p>
+    </div>
+  </section>
+
+  <!-- EDIT -->
+  <section id="view-edit" class="view" hidden>
+    <header class="bar">
+      <button class="icon-btn" id="edit-back" aria-label="Back">←</button>
+      <h1 id="edit-heading">Song</h1>
+      <button class="btn primary small" id="edit-save">Save</button>
+    </header>
+    <div class="content stack">
+      <label>Title<input id="edit-title" class="input" autocomplete="off"></label>
+      <label>Artist<input id="edit-artist" class="input" autocomplete="off"></label>
+      <label>Song length <span class="muted">(minutes:seconds, used to pace unsynced lyrics)</span>
+        <input id="edit-duration" class="input" placeholder="e.g. 3:45" inputmode="numeric" autocomplete="off">
+      </label>
+      <label>Lyrics
+        <textarea id="edit-lyrics" class="input lyrics-input" spellcheck="false" placeholder="Paste lyrics here, one line per line.&#10;&#10;Optional chords go in square brackets before the word:&#10;[G]Today is gonna be the [D]day"></textarea>
+      </label>
+      <details class="help">
+        <summary>Tips: chords and timing</summary>
+        <p>Put chords in square brackets just before the word they land on, like <code>[Am]Hello [F]there</code>. They show above the words.</p>
+        <p>Lines starting with a time like <code>[01:23.45]</code> are “synced” and scroll exactly on time. You can make these yourself with <b>Tap to time</b> in the player.</p>
+      </details>
+      <button class="btn danger" id="edit-delete" hidden>Delete song</button>
+    </div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section id="view-settings" class="view" hidden>
+    <header class="bar">
+      <button class="icon-btn" data-go="#/" aria-label="Back">←</button>
+      <h1>Settings</h1>
+    </header>
+    <div class="content stack">
+      <label class="setting">Text size
+        <span class="row"><input id="set-font" type="range" min="16" max="56" step="2"><output id="set-font-out"></output></span>
+      </label>
+      <label class="setting">After I scroll by hand, carry on after
+        <select id="set-resume" class="input">
+          <option value="2">2 seconds</option><option value="3">3 seconds</option>
+          <option value="5">5 seconds</option><option value="8">8 seconds</option>
+        </select>
+      </label>
+      <label class="setting">Count-in before starting
+        <select id="set-countin" class="input">
+          <option value="0">None</option><option value="3">3 seconds</option><option value="5">5 seconds</option>
+        </select>
+      </label>
+      <label class="setting check"><input id="set-chords" type="checkbox"> Show chords</label>
+      <label class="setting check"><input id="set-wake" type="checkbox"> Keep screen awake while playing</label>
+      <label class="setting check"><input id="set-light" type="checkbox"> Light theme</label>
+      <label class="setting check disabled"><input type="checkbox" disabled> Follow my performance with the microphone <span class="muted">(coming later)</span></label>
+      <hr>
+      <h2>Backup</h2>
+      <p class="muted small">Your songs live on this phone only. Save a backup file now and then so you never lose them.</p>
+      <div class="row gap">
+        <button class="btn grow" id="backup-export">Save backup</button>
+        <button class="btn grow" id="backup-import">Restore backup</button>
+        <input type="file" id="backup-file" accept=".json,application/json" hidden>
+      </div>
+      <p class="muted small" id="app-version"></p>
+    </div>
+  </section>
+
+  <!-- PLAYER -->
+  <section id="view-player" class="view player" hidden>
+    <header class="bar player-bar">
+      <button class="icon-btn" data-go="#/" aria-label="Back">←</button>
+      <div class="titles"><div id="p-title" class="p-title"></div><div id="p-artist" class="muted small"></div></div>
+      <button class="icon-btn" id="p-edit" aria-label="Edit song">✎</button>
+    </header>
+    <div id="p-lyrics" class="p-lyrics" tabindex="0"></div>
+    <div id="p-countdown" class="countdown" hidden></div>
+    <div id="p-manual" class="manual-pill" hidden>Paused following · back in a moment</div>
+    <div id="p-timing" class="timing-panel" hidden>
+      <p class="small">Press play, then tap <b>Next line</b> as you start singing each line.</p>
+      <div class="row gap">
+        <button class="btn grow" id="t-cancel">Cancel</button>
+        <button class="btn primary grow big" id="t-next">Next line</button>
+      </div>
+    </div>
+    <footer class="controls">
+      <div class="progress"><div id="p-progress"></div></div>
+      <div class="row ctrl-row">
+        <span id="p-time" class="muted small time">0:00</span>
+        <span id="p-mode" class="badge"></span>
+      </div>
+      <div class="row ctrl-row">
+        <button class="ctl" id="p-restart" aria-label="Restart">⏮</button>
+        <button class="ctl" id="p-slower" aria-label="Slower">−</button>
+        <button class="ctl play" id="p-play" aria-label="Play">▶</button>
+        <button class="ctl" id="p-faster" aria-label="Faster">+</button>
+        <button class="ctl" id="p-more" aria-label="More">⋯</button>
+      </div>
+      <div id="p-more-panel" class="more-panel" hidden>
+        <div class="row gap center">
+          <span class="muted small">Speed</span><output id="p-speed" class="strong">100%</output>
+          <button class="btn small" id="p-speed-reset">Reset</button>
+        </div>
+        <div class="row gap center">
+          <span class="muted small">Text</span>
+          <button class="btn small" id="p-font-down">A−</button>
+          <button class="btn small" id="p-font-up">A+</button>
+          <button class="btn small" id="p-chords-toggle">Chords</button>
+        </div>
+        <button class="btn small" id="p-tap-time">⏱ Tap to time this song</button>
+      </div>
+    </footer>
+  </section>
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card">
+      <header class="bar"><h1 id="modal-title"></h1><button class="icon-btn" id="modal-close" aria-label="Close">✕</button></header>
+      <div id="modal-body" class="modal-body"></div>
+      <div class="row gap modal-actions" id="modal-actions"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
