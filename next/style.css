@@ -836,3 +836,51 @@ html.in-player .toast { bottom: calc(200px + env(safe-area-inset-bottom)); }
 .player-bar .icon-btn { background: var(--surface-2); }
 .cs-row .bar { height: 10px; border-radius: 999px; }
 .cs-row .bar { padding: 0; position: static; backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+/* ===== 1.8.0 round 2: bolder, flatter, more consistent ===== */
+/* A flat stage-dark ground with one soft teal light at the top, as in the mockups. No coloured haze. */
+body { background-image: radial-gradient(90% 40% at 50% 0%, rgba(2, 128, 144, .2), transparent 70%); background-color: var(--bg); }
+.grain { opacity: .05; }
+header.bar { background: linear-gradient(180deg, var(--bg) 60%, rgba(10, 20, 23, 0)); backdrop-filter: none; -webkit-backdrop-filter: none; }
+.brand-mark { border-radius: 8px; background: var(--cool); box-shadow: none; }
+
+/* Solid, confident fills */
+.list li, .group, .card-note, .rcard, .help, .tempo-edit, .setting.check, .setting.slider, .setting.picker, .level, .track-status { background: #12262b; }
+.group .list li { background: #183139; }
+.list .t, .group-head .t { font: 700 17px var(--font-display); letter-spacing: -0.01em; }
+.segmented { background: #12262b; }
+.input { background: #183139; }
+.chip { background: #183139; }
+.modal-card { background: #0f2329; }
+.modal-card .setting.check, .modal-card .level, .modal-card .track-status { background: #183139; }
+.field-label { text-transform: none; letter-spacing: 0; font: 700 14px var(--font-display); color: var(--muted); }
+label { color: var(--muted); font: 700 14px var(--font-display); }
+.btn.danger { box-shadow: none; color: var(--danger); text-decoration: underline; text-underline-offset: 4px; }
+.folder-opts { gap: 8px; }
+.folder-opt.setting.check { padding: 8px 8px 8px 20px; min-height: 64px; font: 600 16px var(--font-body); }
+
+/* Tab bar: a solid teal pill */
+.tabbar { background: rgba(17, 75, 95, .96); box-shadow: 0 14px 40px rgba(0, 0, 0, .5); }
+
+/* Player: flat ground and one glow behind the lyrics, not three drifting colour fields */
+.player { background: var(--bg); }
+.player .glow { display: none; }
+.pulse { width: 140vmin; height: 90vmin; margin: -45vmin 0 0 -70vmin; background: radial-gradient(ellipse 50% 50% at 50% 50%, rgba(244, 91, 105, .22), rgba(2, 128, 144, .16) 48%, transparent 76%); }
+.gap-inline { background: #12262b; }
+.gap-inline.now { background: var(--baltic); }
+.gap-inline.now .gc-ic { background: rgba(228, 253, 225, .18); }
+.controls { background: linear-gradient(180deg, rgba(10, 20, 23, 0), var(--bg) 26%); }
+.round-btn, .tempo-pill, .player-bar .icon-btn { background: #183139; }
+
+/* Dock: sides take the room they need, so the tempo pill never spills out */
+.dock { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dock-side { flex: 1 1 auto; min-width: max-content; gap: 8px; }
+.tempo-pill { flex: none; height: 52px; padding: 0 14px; gap: 6px; }
+.tp-text small { font-size: 10px; letter-spacing: .04em; }
+@media (max-width: 380px) {
+  .dock { gap: 4px; }
+  .dock-side { gap: 6px; }
+  .playwrap { width: 80px; height: 80px; }
+  .dock .ctl.play { width: 64px; height: 64px; }
+  .tempo-pill { padding: 0 11px; height: 48px; }
+}

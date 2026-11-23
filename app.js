@@ -904,12 +904,13 @@ function openSongSheet(song) {
   body.appendChild(el('div', 'field-label', 'Folders'));
   const fo = el('div', 'folder-opts');
   for (const f of folders) {
-    const lab = el('label', 'folder-opt');
+    const lab = el('label', 'setting check folder-opt');
     const cb = el('input');
     cb.type = 'checkbox';
+    cb.setAttribute('role', 'switch');
     cb.checked = f.songIds.includes(song.id);
     cb.onchange = () => { toggleInFolder(f, song.id, cb.checked); rerender(); };
-    lab.append(cb, document.createTextNode(f.name));
+    lab.append(cb, el('span', null, f.name));
     fo.appendChild(lab);
   }
   const nf = el('button', 'btn small');
@@ -1800,7 +1801,7 @@ const player = {
     $('#p-tempo-btn').classList.toggle('suggested', suggested);
     $('#p-tempo-num').textContent = has ? String(this.playingBpm()) : 'Tap';
     const sub = $('#p-tempo-sub');
-    if (!has || suggested) sub.textContent = !has ? 'to set tempo' : 'Check tempo';
+    if (!has || suggested) sub.textContent = !has ? 'tempo' : 'check';
     else { sub.textContent = 'BPM'; sub.appendChild(el('span', 'tp-sig', ' · ' + timeSig(this.song.beatsPerBar))); }
     $('#p-tempo-btn').setAttribute('aria-label', !has ? 'Set the tempo by tapping' : suggested ? 'Suggested tempo, tap to check it' : 'Song tempo');
     const video = this.usingVideo();
