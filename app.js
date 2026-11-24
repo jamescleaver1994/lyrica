@@ -1301,11 +1301,11 @@ function openPractice() {
 /* Your library by how well you know it: one strip split into shares of the whole library,
  * then a row per stage with its covers stacked. Tap a stage to open its songs. */
 const STAGES = [
-  { key: 4, label: 'Mastered', hint: 'Could play it in my sleep', color: '#e4fde1' },
-  { key: 3, label: 'Comfortable', hint: 'Play it with a glance', color: '#7fe3d6' },
-  { key: 2, label: 'Getting there', hint: 'Know the shape, a few gaps', color: '#028090', lit: true },
-  { key: 1, label: 'Learning', hint: 'Still reading most of it', color: '#2f7f8f', lit: true },
-  { key: 0, label: 'Not started', hint: 'On the list to learn', color: '#456990' },
+  { key: 4, label: 'Mastered', hint: 'Could play it in my sleep', color: '#f45b69' },
+  { key: 3, label: 'Comfortable', hint: 'Play it with a glance', color: '#c4627f' },
+  { key: 2, label: 'Getting there', hint: 'Know the shape, a few gaps', color: '#8a6a9c', lit: true },
+  { key: 1, label: 'Learning', hint: 'Still reading most of it', color: '#4f74a0', lit: true },
+  { key: 0, label: 'Not started', hint: 'On the list to learn', color: '#028090' },
   { key: -1, label: 'Not rated', hint: 'Rate it from its options menu', color: '#2b3f44' },
 ];
 let openStage = null;
@@ -1317,19 +1317,35 @@ function renderLibraryShape() {
   if (!songs.length) { box.appendChild(el('p', 'empty', 'Add a few songs and you\'ll see your library take shape here.')); return; }
   // the strip: shares of the whole library, from not rated on the left to mastered on the right
   const strip = el('div', 'ls-strip');
-  strip.setAttribute('role', 'img');
+  strip.setAttribute('role', 'group');
   strip.setAttribute('aria-label', 'Your ' + songs.length + ' songs: ' + STAGES.filter((st) => groups.get(st.key).length).map((st) => groups.get(st.key).length + ' ' + st.label.toLowerCase()).join(', '));
+  const stripCard = el('div', 'ls-strip-card');
+  const bubble = el('div', 'ls-bubble');
+  bubble.hidden = true;
+  let bubbleTimer = 0;
   STAGES.slice().reverse().forEach((st) => {
     const n = groups.get(st.key).length;
     if (!n) return;
-    const seg = el('i');
+    // each piece is tappable: a little bubble says what it is
+    const seg = el('button', 'ls-seg');
+    seg.type = 'button';
     seg.style.flexGrow = n;
     seg.style.background = st.color;
+    const say = n + ' ' + st.label.toLowerCase();
+    seg.setAttribute('aria-label', say);
+    seg.onclick = () => {
+      bubble.textContent = say;
+      bubble.hidden = false;
+      const cr = stripCard.getBoundingClientRect(), r = seg.getBoundingClientRect();
+      bubble.style.left = clamp(r.left - cr.left + r.width / 2, 60, cr.width - 60) + 'px';
+      strip.querySelectorAll('.ls-seg').forEach((x) => x.classList.toggle('picked', x === seg));
+      clearTimeout(bubbleTimer);
+      bubbleTimer = setTimeout(() => { bubble.hidden = true; seg.classList.remove('picked'); }, 2600);
+    };
     strip.appendChild(seg);
   });
-  const stripCard = el('div', 'ls-strip-card');
-  stripCard.append(strip, el('div', 'ls-strip-ends'));
-  stripCard.lastChild.append(el('span', null, songs.length + (songs.length === 1 ? ' song' : ' songs')), el('span', null, 'Not started to mastered'));
+  stripCard.append(bubble, strip, el('div', 'ls-strip-ends'));
+  stripCard.lastChild.append(el('span', null, songs.length + (songs.length === 1 ? ' song' : ' songs') + '. Tap the bar to see each part.'), el('span', null, 'Mastered'));
   box.appendChild(stripCard);
   // a row per stage, its covers stacked
   for (const st of STAGES) {
