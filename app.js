@@ -1225,6 +1225,27 @@ function openPractice() {
 }
 
 /* Song options: comfort level, folders, edit, delete */
+/* A song you've started learning (Learning or Getting there) that has gone longest without a play.
+ * Anything played in the last day doesn't count as "a while". */
+function pickBackUp(exceptId) {
+  const dayAgo = Date.now() - 86400000;
+  const cands = songs.filter((s) => {
+    if (s.id === exceptId) return false;
+    const c = comfortOf(s);
+    return c && (c.level === 1 || c.level === 2) && (s.lastPlayed || 0) < dayAgo;
+  });
+  cands.sort((a, b) => (a.lastPlayed || 0) - (b.lastPlayed || 0));
+  return cands[0] || null;
+}
+function playedAgo(s) {
+  if (!s.lastPlayed) return 'not played yet';
+  const d = Math.floor((Date.now() - s.lastPlayed) / 86400000);
+  if (d < 2) return 'played yesterday';
+  if (d < 14) return 'last played ' + d + ' days ago';
+  const w = Math.floor(d / 7);
+  return w < 9 ? 'last played ' + w + ' weeks ago' : 'last played over 2 months ago';
+}
+
 function levelPicker(current, onPick) {
   const box = el('div', 'levels');
   LEVELS.forEach((lvl, i) => {
@@ -1972,6 +1993,7 @@ const player = {
   },
   leave() {
     if (!this.song) return;
+    this.clearEnd();
     this.creditPractice();
     this.pause();
     this.stopTiming(true);
@@ -2093,6 +2115,7 @@ const player = {
   useTimeline(tl) {
     this.tl = tl;
     const box = $('#p-lyrics');
+    this.endCard = null;
     box.innerHTML = '';
     box.classList.toggle('no-chords', !settings.showChords);
     this.nodes = tl.lines.map((l, i) => box.appendChild(lineNode(l, i)));
@@ -2144,6 +2167,7 @@ const player = {
       return;
     }
     if (this.t >= this.tl.end - 0.1) { this.t = 0; this.maxT = 0; }
+    this.clearEnd();
     this.playing = true;
     this.manualUntil = 0;
     const hold = this.gapHold;
@@ -2172,6 +2196,7 @@ const player = {
   },
   toggle() { this.playing ? this.pause() : this.play(); },
   restart() {
+    this.clearEnd();
     this.gapHold = null;
     this.t = 0;
     this.maxT = 0;
@@ -2185,6 +2210,7 @@ const player = {
   seekToLine(i) {
     const l = this.tl.lines[i];
     if (!l || l.time == null || this.timing) return;
+    this.clearEnd();
     this.t = l.time;
     this.manualUntil = 0;
     this.gapHold = null;
@@ -2286,16 +2312,81 @@ const player = {
     this.creditPractice();
     this.endSheet();
   },
+  /* ----- onward journeys: the end-of-song card -----
+   * When a song ends a card unspools under the last line, in the lyric column, instead of a sheet over
+   * the words. From a folder it offers the next song (it waits for a tap); otherwise a song you're
+   * learning that you haven't played for a while. Play again is always there, and the comfort rating
+   * is an optional row you can skip. */
+  endCard: null,
   endSheet() {
+    this.clearEnd();
     const song = this.song;
-    const c = comfortOf(song);
-    const body = el('div', 'stack');
-    body.appendChild(el('div', 'muted', 'How well do you know it now? This helps Stanze suggest what to revisit.'));
-    body.appendChild(levelPicker(c ? c.level : null, (i) => { rateSong(song, i); closeModal(); toast('Marked as ' + LEVELS[i].label.toLowerCase()); }));
+    const box = $('#p-lyrics');
+    if (!song || !box) return;
+    const card = el('section', 'end-card');
+    card.setAttribute('aria-label', 'End of song');
+    const f = this.folderId && getFolder(this.folderId);
+    const ids = f ? f.songIds.filter((id) => getSong(id)) : [];
+    const pos = f ? ids.indexOf(song.id) : -1;
     const next = this.nextSong();
-    const actions = [{ label: 'Play again', run: () => this.restart() }];
-    if (next) actions.push({ label: 'Next: ' + next.title, primary: true, run: () => this.goNext() });
-    openModal('Nice one', body, actions);
+    const big = (kicker, title, sub, icon, run, cls) => {
+      const b = el('button', 'end-go' + (cls ? ' ' + cls : ''));
+      b.type = 'button';
+      const txt = el('span', 'eg-text');
+      txt.append(el('small', null, kicker), el('b', null, title));
+      if (sub) txt.appendChild(el('span', 'eg-sub', sub));
+      const ic = el('span', 'eg-ic');
+      ic.appendChild(svgIcon(icon));
+      b.append(txt, ic);
+      b.onclick = run;
+      return b;
+    };
+    let heading = 'That\'s the song';
+    let go = null;
+    if (f && next) {
+      heading = 'Song ' + (pos + 1) + ' of ' + ids.length + ' done';
+      go = big('Up next', next.title || 'Untitled', [next.artist, (ids.indexOf(next.id) + 1) + ' of ' + ids.length].filter(Boolean).join(' · '), 'next', () => this.goNext());
+    } else if (f) {
+      heading = 'That\'s the whole of ' + f.name;
+      go = big('All done', 'Back to ' + f.name, ids.length + (ids.length === 1 ? ' song' : ' songs'), 'folder', () => this.back(), 'quiet');
+    } else {
+      const pick = pickBackUp(song.id);
+      if (pick) {
+        const c = comfortOf(pick);
+        go = big('Pick back up', pick.title || 'Untitled', [pick.artist, c.label, playedAgo(pick)].filter(Boolean).join(' · '), 'play', () => (location.hash = '#/play/' + pick.id));
+      }
+    }
+    card.appendChild(el('div', 'end-head', heading));
+    if (go) card.appendChild(go);
+    const again = el('button', 'btn end-again');
+    again.type = 'button';
+    again.append(svgIcon('restart'), document.createTextNode('Play again'));
+    again.onclick = () => { this.restart(); this.play(); };
+    card.appendChild(again);
+    // the comfort rating: one tap saves it, and nothing waits on it
+    const rate = el('div', 'end-rate');
+    const c = comfortOf(song);
+    const q = el('div', 'er-q', 'How well do you know it now?');
+    const chips = el('div', 'er-chips');
+    chips.setAttribute('role', 'group');
+    chips.setAttribute('aria-label', 'How well do you know it now?');
+    const paint = (level) => [...chips.children].forEach((b, i) => { b.classList.toggle('on', i === level); b.setAttribute('aria-pressed', String(i === level)); });
+    LEVELS.forEach((lvl, i) => {
+      const b = el('button', 'er-chip', lvl.label);
+      b.type = 'button';
+      b.onclick = () => { rateSong(song, i); paint(i); q.textContent = 'Saved as ' + lvl.label.toLowerCase() + '. Tap another to change it.'; };
+      chips.appendChild(b);
+    });
+    rate.append(q, chips);
+    card.appendChild(rate);
+    box.appendChild(card);
+    paint(c ? c.level : -1);
+    this.endCard = card;
+    this.manualUntil = 0;
+    this.touching = false;
+  },
+  clearEnd() {
+    if (this.endCard) { this.endCard.remove(); this.endCard = null; }
   },
   frame(ts) {
     if (!this.song) return;
@@ -2481,6 +2572,7 @@ const player = {
   /* Jump anywhere: the cord, its clues and the cards all come through here. */
   seek(t, live) {
     if (this.timing || !this.tl) return;
+    this.clearEnd();
     this.t = clamp(t, 0, this.endT());
     this.manualUntil = 0;
     this.touching = false;
@@ -2566,6 +2658,8 @@ const player = {
         }
       }
     }
+    // once the song has ended, glide on to the end card
+    if (this.endCard && !this.playing) target = this.endCard.offsetTop - 28 + box.clientHeight * ANCHOR;
     target = Math.max(0, target - box.clientHeight * ANCHOR);
     const manual = this.touching || now < this.manualUntil;
     const away = Math.abs(target - box.scrollTop) > 60;
