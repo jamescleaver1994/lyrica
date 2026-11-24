@@ -77,13 +77,13 @@
     <header class="bar">
       <button class="icon-btn" id="folder-back" aria-label="Back"><svg><use href="#i-back"/></svg></button>
       <h1 id="folder-name"></h1>
-      <button class="btn small" id="folder-reorder">Reorder</button>
+      <button class="btn small" id="folder-add" aria-label="Add songs"><svg><use href="#i-plus"/></svg>Add songs</button>
       <button class="icon-btn" id="folder-menu" aria-label="Folder options"><svg><use href="#i-more"/></svg></button>
     </header>
     <div class="content">
       <div class="muted small" id="folder-meta"></div>
       <ul id="folder-list" class="list"></ul>
-      <p id="folder-empty" class="empty" hidden>This folder is empty. Use the options button on any song to add it here.</p>
+      <div id="folder-empty" class="empty folder-empty" hidden><p>Nothing on this cord yet.</p><button class="btn primary" id="folder-empty-add"><svg><use href="#i-plus"/></svg>Add songs</button></div>
     </div>
   </section>
 
@@ -251,7 +251,6 @@
       </div>
     </div>
     <footer class="controls">
-      <div id="p-dots" class="beat-dots" hidden aria-hidden="true"></div>
       <div class="cordbox" id="p-cordbox">
         <div class="clues" id="p-clues"></div>
         <svg id="p-cord" class="cord" role="slider" tabindex="0" aria-label="Song position. Drag to move through the song." aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
@@ -272,17 +271,18 @@
       <div class="dock">
         <div class="dock-side">
           <button type="button" class="round-btn" id="p-restart" aria-label="Start again"><svg><use href="#i-restart"/></svg></button>
-          <button type="button" class="tempo-pill" id="p-tempo-btn" aria-label="Song tempo">
-            <svg><use href="#i-metronome"/></svg>
-            <span class="tp-text"><b id="p-tempo-num">Add</b><small id="p-tempo-sub">tempo</small></span>
+          <button type="button" class="tempo-btn" id="p-tempo-btn" aria-label="Song tempo">
+            <svg class="beat-ring" id="p-beatring" viewBox="0 0 64 64" aria-hidden="true"></svg>
+            <span class="tp-text"><b id="p-tempo-num">Tap</b><small id="p-tempo-sub">tempo</small></span>
           </button>
         </div>
-        <div class="playwrap">
+        <div class="playwrap" id="p-playwrap">
           <svg class="count-ring" id="p-ring" viewBox="0 0 92 92" aria-hidden="true"></svg>
           <button class="ctl play" id="p-play" aria-label="Play"><svg><use href="#i-play"/></svg></button>
+          <span class="ci-num" id="p-cinum" aria-hidden="true"></span>
         </div>
         <div class="dock-side end">
-          <button type="button" class="round-btn" id="p-metro" aria-pressed="false" aria-label="Metronome click"><svg><use href="#i-click"/></svg><i id="p-beat" class="beat-dot" hidden></i></button>
+          <button type="button" class="round-btn" id="p-metro" aria-pressed="false" aria-label="Metronome click"><svg><use href="#i-click"/></svg></button>
           <button type="button" class="round-btn" id="p-more" aria-label="Playback options"><svg><use href="#i-more"/></svg></button>
         </div>
       </div>
