@@ -5,7 +5,7 @@ const VERSION = '1.8.0';
 const CACHE = 'lyrica-app-' + VERSION;
 const RUNTIME = 'lyrica-runtime-v1';
 const SHELL = ['./', 'index.html', 'style.css?v=' + VERSION, 'app.js?v=' + VERSION, 'manifest.webmanifest',
-  'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'];
+  'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'];
 const RUNTIME_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
 
 self.addEventListener('install', (e) => {

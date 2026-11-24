@@ -1,4 +1,4 @@
-/* Lyrica: a small offline-first lyrics teleprompter.
+/* Stanze (formerly Lyrica; storage keys keep the old name so saved songs carry over): a small offline-first lyrics teleprompter.
  * Everything is stored on the device (localStorage). Lyrics search uses the free LRCLIB API,
  * cover art is looked up with Apple's free iTunes Search API and shown straight from Apple's servers.
  */
@@ -1514,7 +1514,7 @@ $('#backup-export').onclick = () => {
   const data = JSON.stringify({ app: 'lyrica', version: 2, exported: new Date().toISOString(), settings, meta, folders, songs }, null, 1);
   const a = el('a');
   a.href = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
-  a.download = 'lyrica-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+  a.download = 'stanze-backup-' + new Date().toISOString().slice(0, 10) + '.json';
   document.body.appendChild(a);
   a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
@@ -1544,7 +1544,7 @@ $('#backup-file').addEventListener('change', async (e) => {
     toast('Restored ' + data.songs.length + ' songs (' + added + ' new)');
     openSettings();
   } catch {
-    toast('That file is not a Lyrica backup');
+    toast('That file is not a Stanze backup');
   }
 });
 
@@ -1789,7 +1789,7 @@ function openTrackSheet(song, kind) {
     use.hidden = false;
     use.textContent = 'Use this video';
     if (!dur) say('Couldn\'t read how long this video is, so it can\'t be checked against the original.', '');
-    else if (!orig) say('Length ' + fmtTime(dur) + '. Lyrica doesn\'t know how long the original is, so it can\'t compare them.', '');
+    else if (!orig) say('Length ' + fmtTime(dur) + '. Stanze doesn\'t know how long the original is, so it can\'t compare them.', '');
     else {
       const diff = dur - orig;
       if (Math.abs(diff) <= 5) say('Length ' + fmtTime(dur) + ', which matches the original (' + fmtTime(orig) + ').', 'ok');
@@ -2220,7 +2220,7 @@ const player = {
     const song = this.song;
     const c = comfortOf(song);
     const body = el('div', 'stack');
-    body.appendChild(el('div', 'muted', 'How well do you know it now? This helps Lyrica suggest what to revisit.'));
+    body.appendChild(el('div', 'muted', 'How well do you know it now? This helps Stanze suggest what to revisit.'));
     body.appendChild(levelPicker(c ? c.level : null, (i) => { rateSong(song, i); closeModal(); toast('Marked as ' + LEVELS[i].label.toLowerCase()); }));
     const next = this.nextSong();
     const actions = [{ label: 'Play again', run: () => this.restart() }];

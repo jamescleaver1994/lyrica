@@ -1,11 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <defs>
-    <radialGradient id="g" cx="30%" cy="20%" r="90%"><stop offset="0" stop-color="#114b5f"/><stop offset="1" stop-color="#0a1215"/></radialGradient>
-    <linearGradient id="p" x1="0" x2="1"><stop offset="0" stop-color="#ff8f7e"/><stop offset="1" stop-color="#f45b69"/></linearGradient>
-  </defs>
-  <rect width="512" height="512" rx="112" fill="url(#g)"/>
-  <rect x="104" y="138" width="220" height="28" rx="14" fill="#456990"/>
-  <rect x="104" y="210" width="304" height="46" rx="23" fill="url(#p)"/>
-  <rect x="104" y="300" width="264" height="28" rx="14" fill="#028090"/>
-  <rect x="104" y="366" width="180" height="28" rx="14" fill="#456990" opacity=".6"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><linearGradient id="g" x1="100" y1="10" x2="0" y2="90" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#E4FDE1"/><stop offset="0.55" stop-color="#E4FDE1"/><stop offset="1" stop-color="#F45B69"/></linearGradient><linearGradient id="bg" x1="0.33" y1="0" x2="0.67" y2="1"><stop offset="0" stop-color="#145A70"/><stop offset="1" stop-color="#0C2C38"/></linearGradient><clipPath id="c"><rect width="100" height="100" rx="23.3"/></clipPath></defs><g clip-path="url(#c)"><rect width="100" height="100" fill="url(#bg)"/><path d="M110 24 C 70 18, 28 20, 31 40 C 34 56, 69 46, 71 62 C 73 80, 30 82, -10 76" fill="none" stroke="url(#g)" stroke-width="17" stroke-linecap="round"/></g></svg>
