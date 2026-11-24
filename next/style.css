@@ -1201,3 +1201,34 @@ ul.threaded > li.hint-nudge .bead { background: var(--accent); }
 .end-card.outro { animation-duration: 1.6s; opacity: .82; }
 .end-card { transition: opacity .8s var(--unspool); }
 .end-auto[hidden] { display: none; }
+
+/* ===== Practice: your library by how well you know it ===== */
+.lib-shape-head h2 { margin: 0 0 4px; font: 800 24px/1.1 var(--font-display); letter-spacing: -0.03em; }
+.lib-shape-head p { margin: 0 0 12px; font: 400 15px/1.45 var(--font-body); color: var(--ink-soft); }
+.lib-shape { display: flex; flex-direction: column; gap: 8px; }
+.ls-strip-card { padding: 18px 18px 14px; border-radius: 28px; background: var(--surface-raised); display: flex; flex-direction: column; gap: 10px; margin-bottom: 4px; }
+.ls-strip { display: flex; gap: 4px; height: 28px; }
+.ls-strip i { flex: 1 1 0; min-width: 10px; border-radius: 6px; }
+.ls-strip i:first-child { border-top-left-radius: 999px; border-bottom-left-radius: 999px; }
+.ls-strip i:last-child { border-top-right-radius: 999px; border-bottom-right-radius: 999px; }
+.ls-strip-ends { display: flex; justify-content: space-between; font: 500 12px var(--font-body); color: var(--muted); }
+.ls-stage {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 68px; padding: 10px 16px 10px 16px;
+  border: 0; border-radius: 26px; background: var(--surface-raised); color: var(--text); text-align: left; cursor: pointer;
+  transition: transform .3s var(--spring), background-color .3s var(--unspool);
+}
+.ls-stage:active { transform: scale(.98); }
+.ls-stage.lit { background: var(--teal-deep); }
+.ls-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.ls-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ls-text b { font: 800 17px var(--font-display); letter-spacing: -0.01em; }
+.ls-text small { font: 400 13px var(--font-body); color: var(--muted); }
+.ls-stage.lit .ls-text small { color: var(--ink-soft); }
+.ls-stack { display: flex; align-items: center; }
+.ls-stack .cover { width: 38px; height: 38px; border-radius: 11px; box-shadow: 0 0 0 2px var(--surface-raised); }
+.ls-stage.lit .ls-stack .cover { box-shadow: 0 0 0 2px var(--teal-deep); }
+.ls-stack .cover + .cover { margin-left: -14px; }
+.ls-stack .cover svg { width: 16px; height: 16px; }
+.ls-more { margin-left: 6px; font: 700 13px var(--font-display); color: var(--muted); }
+.ls-n { min-width: 22px; text-align: right; font: 800 17px var(--font-display); font-variant-numeric: tabular-nums; }
+.ls-songs { margin: 0 0 6px; }

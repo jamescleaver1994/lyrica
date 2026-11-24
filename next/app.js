@@ -1296,23 +1296,65 @@ function deckReason(s, short) {
 function openPractice() {
   show('practice');
   renderDeck();
-  const counts = LEVELS.map(() => 0);
-  let unrated = 0;
-  for (const s of songs) { const c = comfortOf(s); if (c) counts[c.level]++; else unrated++; }
-  const max = Math.max(1, ...counts, unrated);
+  renderLibraryShape();
+}
+/* Your library by how well you know it: one strip split into shares of the whole library,
+ * then a row per stage with its covers stacked. Tap a stage to open its songs. */
+const STAGES = [
+  { key: 4, label: 'Mastered', hint: 'Could play it in my sleep', color: '#e4fde1' },
+  { key: 3, label: 'Comfortable', hint: 'Play it with a glance', color: '#7fe3d6' },
+  { key: 2, label: 'Getting there', hint: 'Know the shape, a few gaps', color: '#028090', lit: true },
+  { key: 1, label: 'Learning', hint: 'Still reading most of it', color: '#2f7f8f', lit: true },
+  { key: 0, label: 'Not started', hint: 'On the list to learn', color: '#456990' },
+  { key: -1, label: 'Not rated', hint: 'Rate it from its options menu', color: '#2b3f44' },
+];
+let openStage = null;
+function renderLibraryShape() {
   const box = $('#comfort-summary');
   box.innerHTML = '';
-  const row = (label, n) => {
-    const r = el('div', 'cs-row');
-    const bar = el('div', 'bar');
-    const i = el('i');
-    i.style.width = (n / max) * 100 + '%';
-    bar.appendChild(i);
-    r.append(el('span', null, label), bar, el('span', 'n', String(n)));
-    box.appendChild(r);
-  };
-  for (let k = LEVELS.length - 1; k >= 0; k--) row(LEVELS[k].label, counts[k]);
-  row('Not rated', unrated);
+  const groups = new Map(STAGES.map((st) => [st.key, []]));
+  for (const s of songs) { const c = comfortOf(s); groups.get(c ? c.level : -1).push(s); }
+  if (!songs.length) { box.appendChild(el('p', 'empty', 'Add a few songs and you\'ll see your library take shape here.')); return; }
+  // the strip: shares of the whole library, from not rated on the left to mastered on the right
+  const strip = el('div', 'ls-strip');
+  strip.setAttribute('role', 'img');
+  strip.setAttribute('aria-label', 'Your ' + songs.length + ' songs: ' + STAGES.filter((st) => groups.get(st.key).length).map((st) => groups.get(st.key).length + ' ' + st.label.toLowerCase()).join(', '));
+  STAGES.slice().reverse().forEach((st) => {
+    const n = groups.get(st.key).length;
+    if (!n) return;
+    const seg = el('i');
+    seg.style.flexGrow = n;
+    seg.style.background = st.color;
+    strip.appendChild(seg);
+  });
+  const stripCard = el('div', 'ls-strip-card');
+  stripCard.append(strip, el('div', 'ls-strip-ends'));
+  stripCard.lastChild.append(el('span', null, songs.length + (songs.length === 1 ? ' song' : ' songs')), el('span', null, 'Not started to mastered'));
+  box.appendChild(stripCard);
+  // a row per stage, its covers stacked
+  for (const st of STAGES) {
+    const list = groups.get(st.key);
+    if (!list.length) continue;
+    const b = el('button', 'ls-stage' + (st.lit ? ' lit' : '') + (openStage === st.key ? ' open' : ''));
+    b.type = 'button';
+    b.setAttribute('aria-expanded', String(openStage === st.key));
+    const dot = el('span', 'ls-dot');
+    dot.style.background = st.color;
+    const txt = el('span', 'ls-text');
+    txt.append(el('b', null, st.label), el('small', null, st.hint));
+    const stack = el('span', 'ls-stack');
+    stack.setAttribute('aria-hidden', 'true');
+    list.slice(0, 4).forEach((s) => stack.appendChild(coverNode(s)));
+    const n = el('span', 'ls-n', String(list.length));
+    b.append(dot, txt, stack, n);
+    b.onclick = () => { openStage = openStage === st.key ? null : st.key; renderLibraryShape(); };
+    box.appendChild(b);
+    if (openStage === st.key) {
+      const ul = el('ul', 'list ls-songs');
+      list.slice().sort(byTitle).forEach((s) => ul.appendChild(songTile(s)));
+      box.appendChild(ul);
+    }
+  }
 }
 function renderDeck() {
   const d = deckState();
