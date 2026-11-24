@@ -1228,15 +1228,12 @@ ul.threaded > li.hint-nudge .bead { background: var(--accent); }
   transition: transform .3s var(--spring), background-color .3s var(--unspool);
 }
 .ls-stage:active { transform: scale(.98); }
-.ls-stage.lit { background: var(--teal-deep); }
 .ls-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
 .ls-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .ls-text b { font: 800 17px var(--font-display); letter-spacing: -0.01em; }
 .ls-text small { font: 400 13px var(--font-body); color: var(--muted); }
-.ls-stage.lit .ls-text small { color: var(--ink-soft); }
 .ls-stack { display: flex; align-items: center; }
 .ls-stack .cover { width: 38px; height: 38px; border-radius: 11px; box-shadow: 0 0 0 2px var(--surface-raised); }
-.ls-stage.lit .ls-stack .cover { box-shadow: 0 0 0 2px var(--teal-deep); }
 .ls-stack .cover + .cover { margin-left: -14px; }
 .ls-stack .cover svg { width: 16px; height: 16px; }
 .ls-more { margin-left: 6px; font: 700 13px var(--font-display); color: var(--muted); }

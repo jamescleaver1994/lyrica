@@ -4,7 +4,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.9.0';
 const LRCLIB = 'https://lrclib.net/api';
 const ITUNES = 'https://itunes.apple.com/search';
 const DEEZER = 'https://api.deezer.com';
@@ -1303,8 +1303,8 @@ function openPractice() {
 const STAGES = [
   { key: 4, label: 'Mastered', hint: 'Could play it in my sleep', color: '#f45b69' },
   { key: 3, label: 'Comfortable', hint: 'Play it with a glance', color: '#c4627f' },
-  { key: 2, label: 'Getting there', hint: 'Know the shape, a few gaps', color: '#8a6a9c', lit: true },
-  { key: 1, label: 'Learning', hint: 'Still reading most of it', color: '#4f74a0', lit: true },
+  { key: 2, label: 'Getting there', hint: 'Know the shape, a few gaps', color: '#8a6a9c' },
+  { key: 1, label: 'Learning', hint: 'Still reading most of it', color: '#4f74a0' },
   { key: 0, label: 'Not started', hint: 'On the list to learn', color: '#028090' },
   { key: -1, label: 'Not rated', hint: 'Rate it from its options menu', color: '#2b3f44' },
 ];
@@ -1351,7 +1351,7 @@ function renderLibraryShape() {
   for (const st of STAGES) {
     const list = groups.get(st.key);
     if (!list.length) continue;
-    const b = el('button', 'ls-stage' + (st.lit ? ' lit' : '') + (openStage === st.key ? ' open' : ''));
+    const b = el('button', 'ls-stage' + (openStage === st.key ? ' open' : ''));
     b.type = 'button';
     b.setAttribute('aria-expanded', String(openStage === st.key));
     const dot = el('span', 'ls-dot');
