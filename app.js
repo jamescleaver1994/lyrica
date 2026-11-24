@@ -1,10 +1,10 @@
-/* Lyrica: a small offline-first lyrics teleprompter.
+/* Stanze (formerly Lyrica; storage keys keep the old name so saved songs carry over): a small offline-first lyrics teleprompter.
  * Everything is stored on the device (localStorage). Lyrics search uses the free LRCLIB API,
  * cover art is looked up with Apple's free iTunes Search API and shown straight from Apple's servers.
  */
 'use strict';
 
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.8.0';
 const LRCLIB = 'https://lrclib.net/api';
 const ITUNES = 'https://itunes.apple.com/search';
 const DEEZER = 'https://api.deezer.com';
@@ -618,13 +618,263 @@ function songTile(song, opts = {}) {
     li.appendChild(r);
   } else {
     const more = iconBtn('more', 'Song options');
-    more.onclick = (e) => { e.stopPropagation(); openSongSheet(song); };
+    more.onclick = (e) => { e.stopPropagation(); openSongSheet(song, opts.folderId); };
     li.appendChild(more);
     li.onclick = () => (location.hash = '#/play/' + song.id + (opts.folderId ? '/' + opts.folderId : ''));
   }
   queueEnrich(song);
   return li;
 }
+
+/* ---------------- the cord through lists ----------------
+ * Songs hang on a loose, wavy cord with a bead for each one. In a folder the beads are numbered
+ * and the first is coral (up next). Rows string themselves on one after another. */
+function threadList(ul, numbered) {
+  ul.classList.add('threaded');
+  ul.classList.toggle('numbered', !!numbered);
+  const rows = [...ul.children].filter((li) => li.tagName === 'LI' && !li.classList.contains('letter-head'));
+  rows.forEach((li, i) => {
+    li.style.setProperty('--i', Math.min(i, 14));
+    const bead = el('span', 'bead' + (i === 0 ? ' first' : ''), numbered ? String(i + 1) : '');
+    bead.setAttribute('aria-hidden', 'true');
+    li.prepend(bead);
+  });
+  requestAnimationFrame(() => drawThread(ul));
+}
+/* The cord is drawn as a smooth line through the beads, swaying gently between them.
+ * A list being reordered adds a live displacement (ul._cordU) on top, from the string simulation below. */
+function cordGeom(ul) {
+  const beads = [...ul.querySelectorAll(':scope > li > .bead')];
+  if (!beads.length || !ul.offsetParent) return null;
+  const ur = ul.getBoundingClientRect();
+  const pins = beads.map((bd) => { const r = bd.getBoundingClientRect(); return [r.left - ur.left + r.width / 2, r.top - ur.top + r.height / 2]; });
+  // the cord's ends come from the resting layout, so they stay put while a row is being dragged
+  const rest = beads.map((bd) => bd.parentElement.offsetTop + bd.parentElement.offsetHeight / 2);
+  const ys = pins.map((p) => p[1]);
+  return { x: pins[0][0], ys, sorted: ys.slice().sort((p, q) => p - q), y0: Math.max(0, Math.min(...rest) - 26), y1: Math.max(...rest) + 60, h: ul.scrollHeight };
+}
+const CORD_STEP = 8;
+function cordRest(g, y) {
+  // between each pair of beads the cord bows out a little, alternating sides
+  const ys = [g.y0].concat(g.sorted, [g.y1]);
+  for (let j = 0; j < ys.length - 1; j++) {
+    if (y <= ys[j + 1] || j === ys.length - 2) {
+      const t = clamp((y - ys[j]) / Math.max(1, ys[j + 1] - ys[j]), 0, 1);
+      return (j % 2 ? 1 : -1) * 8 * Math.sin(Math.PI * t);
+    }
+  }
+  return 0;
+}
+function drawThread(ul) {
+  const g = cordGeom(ul);
+  let svg = ul.querySelector(':scope > svg.thread');
+  if (!g) { if (svg) svg.remove(); return; }
+  const ns = 'http://www.w3.org/2000/svg';
+  if (!svg) {
+    svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('class', 'thread');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.appendChild(document.createElementNS(ns, 'path')).setAttribute('pathLength', '1');
+    ul.prepend(svg);
+  }
+  svg.setAttribute('width', g.x * 2 + 60);
+  svg.setAttribute('height', g.h + 80);
+  const y0 = g.y0, y1 = g.y1;
+  const u = ul._cordU;
+  let d = '';
+  for (let y = y0, i = 0; y <= y1 + 0.01; y += CORD_STEP, i++) {
+    const x = g.x + cordRest(g, y) + (u && u.x[i] ? u.x[i] : 0);
+    d += (i ? ' L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1);
+  }
+  svg.firstChild.setAttribute('d', d);
+  return { g, y0, n: Math.floor((y1 - y0) / CORD_STEP) + 1 };
+}
+
+/* ----- Reorder a folder by dragging a bead along the cord -----
+ * The cord is a little string simulation: each sample can move sideways, pulled back by its neighbours
+ * (tension) and by the beads it passes through. Dragging a bead shakes it gently; dropping it gives
+ * one small snap that settles. Displacement is capped, so the cord bends but never folds or crosses. */
+function cordSim(ul) {
+  if (ul._sim) return ul._sim;
+  const sim = { ul, x: [], v: [], pinHeld: null, raf: 0, last: 0, quietFor: 0 };
+  ul._cordU = sim;
+  const MAXU = 22;
+  const step = (dt) => {
+    const info = drawThread(ul);
+    if (!info) return false;
+    const n = info.n;
+    while (sim.x.length < n) { sim.x.push(0); sim.v.push(0); }
+    sim.x.length = sim.v.length = n;
+    const pinIdx = info.g.ys.map((y) => Math.round((y - info.y0) / CORD_STEP));
+    const K = 900, DAMP = 5, HOME = 6, PIN = 260;
+    const subs = 4, h = dt / subs;
+    for (let s = 0; s < subs; s++) {
+      for (let i = 0; i < n; i++) {
+        const l = i > 0 ? sim.x[i - 1] : 0, r = i < n - 1 ? sim.x[i + 1] : 0;
+        let a = K * (l + r - 2 * sim.x[i]) / 4 - DAMP * sim.v[i] - HOME * sim.x[i];
+        sim.v[i] += a * h;
+      }
+      pinIdx.forEach((pi, k) => {
+        if (pi < 0 || pi >= n) return;
+        if (sim.pinHeld && sim.pinHeld.k === k) {
+          // the bead in your hand leads the cord a little sideways, plus a sway from how fast you move
+          const want = clamp(sim.pinHeld.dx, -MAXU, MAXU);
+          sim.v[pi] += (want - sim.x[pi]) * PIN * 2 * h;
+          sim.v[pi] *= 0.8;
+        } else {
+          sim.v[pi] += -sim.x[pi] * PIN * h;
+        }
+      });
+      for (let i = 0; i < n; i++) { sim.x[i] = clamp(sim.x[i] + sim.v[i] * h, -MAXU, MAXU); }
+    }
+    return true;
+  };
+  const loop = (now) => {
+    const dt = Math.min(0.033, (now - (sim.last || now)) / 1000) || 0.016;
+    sim.last = now;
+    if (!ul.isConnected || !step(dt)) { sim.stop(); return; }
+    const energy = sim.x.reduce((m, v) => Math.max(m, Math.abs(v)), 0) + sim.v.reduce((m, v) => Math.max(m, Math.abs(v)), 0) / 20;
+    sim.quietFor = energy < 0.15 && !sim.pinHeld ? sim.quietFor + dt : 0;
+    if (sim.quietFor > 0.25) { sim.stop(); drawThread(ul); return; }
+    sim.raf = requestAnimationFrame(loop);
+  };
+  sim.kick = () => { if (!sim.raf) { sim.last = 0; sim.raf = requestAnimationFrame(loop); } };
+  sim.stop = () => { cancelAnimationFrame(sim.raf); sim.raf = 0; sim.x = []; sim.v = []; ul._sim = null; ul._cordU = null; };
+  sim.pluck = (k, amount) => {
+    const g = cordGeom(ul);
+    if (!g) return;
+    const i = Math.round((g.ys[k] - g.y0) / CORD_STEP);
+    [-2, -1, 1, 2].forEach((o, j) => { if (sim.v[i + o] != null) sim.v[i + o] += amount * (j % 2 ? 1 : -1); });
+  };
+  ul._sim = sim;
+  sim.kick();
+  return sim;
+}
+
+function enableCordReorder(ul, folder) {
+  const rows = () => [...ul.querySelectorAll(':scope > li')];
+  const beadOf = (li) => li.querySelector('.bead');
+  const renumber = () => rows().forEach((li, i) => {
+    const b = beadOf(li);
+    b.textContent = String(i + 1);
+    b.classList.toggle('first', i === 0);
+    b.setAttribute('aria-label', 'Move ' + (li.dataset.title || 'song') + ', number ' + (i + 1) + ' of ' + rows().length + '. Drag, or use the up and down arrow keys.');
+  });
+  const commit = () => {
+    folder.songIds = rows().map((li) => li.dataset.id);
+    saveFolders();
+    renumber();
+  };
+  const settle = (li, k) => {
+    const b = beadOf(li);
+    b.classList.remove('snap');
+    void b.offsetWidth;
+    b.classList.add('snap');
+    const sim = cordSim(ul);
+    sim.pluck(k, 110);
+    sim.kick();
+    if (navigator.vibrate) { try { navigator.vibrate(14); } catch { /* fine */ } }
+  };
+  rows().forEach((li) => {
+    const bead = beadOf(li);
+    bead.setAttribute('role', 'button');
+    bead.setAttribute('tabindex', '0');
+    bead.addEventListener('click', (e) => e.stopPropagation());
+    bead.addEventListener('keydown', (e) => {
+      const d = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
+      if (!d) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); li.click(); } return; }
+      e.preventDefault();
+      const all = rows();
+      const i = all.indexOf(li), j = i + d;
+      if (j < 0 || j >= all.length) return;
+      if (d < 0) ul.insertBefore(li, all[j]); else ul.insertBefore(all[j], li);
+      commit();
+      bead.focus();
+      settle(li, j);
+    });
+    bead.addEventListener('pointerdown', (e) => {
+      if (e.button > 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const all = rows();
+      const from = all.indexOf(li);
+      const tops = all.map((r) => r.offsetTop);
+      const hts = all.map((r) => r.offsetHeight);
+      const gap = all.length > 1 ? tops[1] - tops[0] - hts[0] : 8;
+      const startY = e.clientY + window.scrollY, startX = e.clientX;
+      let moved = false, to = from, lastY = e.clientY, vy = 0, raf = 0, curY = e.clientY, curX = e.clientX;
+      try { bead.setPointerCapture(e.pointerId); } catch { /* fine */ }
+      const sim = cordSim(ul);
+      const frame = () => {
+        // keep the list scrolling when you hold a bead near the top or bottom of the screen
+        const edge = 70, vh = window.innerHeight;
+        if (curY > vh - edge - 90) window.scrollBy(0, 6); else if (curY < edge + 60) window.scrollBy(0, -6);
+        const dy = curY + window.scrollY - startY;
+        const lo = -tops[from], hi = tops[all.length - 1] + hts[all.length - 1] - tops[from] - hts[from];
+        const y = clamp(dy, lo, hi);
+        li.style.transform = 'translateY(' + y + 'px) scale(1.02)';
+        const mid = tops[from] + y + hts[from] / 2;
+        // the slot you're over: past the middle of a row below, or above the middle of a row above
+        let t = from;
+        // (a third of the way into a row is enough, so the first and last slots can be reached
+        // even though the row can't be dragged past the ends of the list)
+        for (let k = from + 1; k < all.length; k++) if (mid > tops[k] + hts[k] * 0.35) t = k;
+        for (let k = from - 1; k >= 0; k--) if (mid < tops[k] + hts[k] * 0.65) t = k;
+        if (t !== to) { to = t; if (navigator.vibrate) { try { navigator.vibrate(6); } catch { /* fine */ } } }
+        all.forEach((r, k) => {
+          if (k === from) return;
+          const shift = from < to && k > from && k <= to ? -(hts[from] + gap) : from > to && k < from && k >= to ? hts[from] + gap : 0;
+          r.style.transform = shift ? 'translateY(' + shift + 'px)' : '';
+        });
+        sim.pinHeld = { k: from, dx: (curX - startX) * 0.35 + clamp(vy * 1.4, -18, 18) };
+        vy *= 0.85;
+        raf = requestAnimationFrame(frame);
+      };
+      const move = (ev) => {
+        if (!moved && Math.abs(ev.clientY + window.scrollY - startY) < 5 && Math.abs(ev.clientX - startX) < 5) return;
+        if (!moved) {
+          moved = true;
+          dismissReorderHint();
+          ul.classList.add('reordering', 'settled');
+          li.classList.add('lifted');
+          all.forEach((r) => { if (r !== li) r.classList.add('making-room'); });
+          raf = requestAnimationFrame(frame);
+        }
+        vy = vy * 0.6 + (ev.clientY - lastY) * 0.4;
+        lastY = ev.clientY;
+        curY = ev.clientY;
+        curX = ev.clientX;
+      };
+      const up = () => {
+        bead.removeEventListener('pointermove', move);
+        bead.removeEventListener('pointerup', up);
+        bead.removeEventListener('pointercancel', up);
+        cancelAnimationFrame(raf);
+        sim.pinHeld = null;
+        if (!moved) { li.click(); return; } // a tap on the bead plays from that song
+        // glide into the new slot, then put the rows in their new order without any jump
+        const slot = to === from ? 0 : to > from ? tops[to] + hts[to] - tops[from] - hts[from] : tops[to] - tops[from];
+        li.classList.remove('lifted');
+        li.classList.add('dropping');
+        li.style.transform = 'translateY(' + slot + 'px)';
+        setTimeout(() => {
+          all.forEach((r) => { r.classList.remove('making-room', 'dropping'); r.style.transition = 'none'; r.style.transform = ''; });
+          if (to !== from) { if (to > from) all[to].after(li); else all[to].before(li); }
+          ul.classList.remove('reordering');
+          void ul.offsetHeight;
+          all.forEach((r) => { r.style.transition = ''; });
+          if (to !== from) commit();
+          settle(li, to);
+        }, 260);
+      };
+      bead.addEventListener('pointermove', move);
+      bead.addEventListener('pointerup', up);
+      bead.addEventListener('pointercancel', up);
+    });
+  });
+  renumber();
+}
+window.addEventListener('resize', () => document.querySelectorAll('ul.threaded').forEach(drawThread));
 
 /* ---------------- library: songs / artists / folders ---------------- */
 const SORTS = {
@@ -673,7 +923,12 @@ function renderLibrary() {
     const newBtn = el('button', 'btn');
     newBtn.type = 'button';
     newBtn.append(svgIcon('plus'), document.createTextNode('New folder'));
-    newBtn.onclick = () => askText('New folder', 'Name, e.g. "Friday setlist" or "Acoustic"', '', (name) => (location.hash = '#/folder/' + createFolder(name).id));
+    newBtn.onclick = () => askText('New folder', 'Name, e.g. "Friday setlist" or "Acoustic"', '', (name) => {
+      const f = createFolder(name);
+      location.hash = '#/folder/' + f.id;
+      // a new folder is empty, so go straight on to choosing its songs
+      if (songs.length) setTimeout(() => openAddSongs(f), 260);
+    });
     box.appendChild(newBtn);
     const ul = el('ul', 'list');
     for (const f of folders.filter((f) => !q || f.name.toLowerCase().includes(q))) {
@@ -690,6 +945,8 @@ function renderLibrary() {
       ul.appendChild(li);
     }
     box.appendChild(ul);
+    [...ul.children].forEach((li, i) => li.style.setProperty('--i', Math.min(i, 14)));
+    ul.classList.add('strung');
     if (!folders.length) { empty.hidden = false; empty.textContent = 'Folders keep setlists, genres or anything else together. A song can be in as many folders as you like.'; }
   } else if (view === 'artists') {
     const groups = new Map();
@@ -747,6 +1004,7 @@ function renderLibrary() {
       }
       ul.appendChild(songTile(s));
     }
+    threadList(ul, false);
     if (!list.length) { empty.hidden = false; empty.textContent = songs.length ? 'No songs match that filter.' : 'No songs yet. Use Find to look one up, or the plus button to paste your own.'; }
   }
   renderAlphaRail(letters);
@@ -811,12 +1069,47 @@ function renderFolder() {
   const total = list.reduce((s, x) => s + (x.duration || 0), 0);
   $('#folder-name').textContent = f.name;
   $('#folder-meta').textContent = list.length + (list.length === 1 ? ' song' : ' songs') + (total ? ' · ' + fmtTotal(total) : '');
-  $('#folder-reorder').textContent = reorderMode ? 'Done' : 'Reorder';
-  $('#folder-reorder').hidden = list.length < 2;
   const ul = $('#folder-list');
   ul.innerHTML = '';
-  list.forEach((s, i) => ul.appendChild(songTile(s, { reorder: reorderMode, index: i, count: list.length, folderId: f.id })));
+  list.forEach((s) => { const li = songTile(s, { folderId: f.id }); li.dataset.id = s.id; li.dataset.title = s.title || 'Untitled'; ul.appendChild(li); });
+  threadList(ul, true);
+  if (list.length > 1) enableCordReorder(ul, f);
+  $('#folder-drag-note').hidden = list.length < 2;
+  if (list.length > 1 && !settings.reorderHintSeen) setTimeout(() => showReorderHint(ul), 700);
   $('#folder-empty').hidden = list.length > 0;
+}
+/* The first time someone has a folder with two or more songs, show them the beads can be dragged:
+ * the first row nudges down along the cord and back, with a short note beside it. After that a
+ * small "Drag the numbers to reorder" line under the folder's title keeps reminding them. */
+function showReorderHint(ul) {
+  if (settings.reorderHintSeen || $('#view-folder').hidden || document.querySelector('.drag-hint')) return;
+  const li = ul.querySelector(':scope > li');
+  if (!li) return;
+  const tip = el('div', 'drag-hint');
+  tip.setAttribute('role', 'status');
+  tip.append(el('span', null, 'Hold a number and drag it up or down to change the order'));
+  const ok = el('button', 'btn small', 'Got it');
+  ok.type = 'button';
+  ok.onclick = dismissReorderHint;
+  tip.appendChild(ok);
+  li.after(tip);
+  tip.style.top = (li.offsetTop + li.offsetHeight + 6) + 'px';
+  const nudge = () => {
+    if (!tip.isConnected) return;
+    li.classList.remove('hint-nudge');
+    void li.offsetWidth;
+    li.classList.add('hint-nudge');
+    const sim = ul._sim || cordSim(ul);
+    setTimeout(() => { sim.pluck(0, 60); sim.kick(); }, 380);
+  };
+  nudge();
+  tip._timer = setInterval(nudge, 3200);
+}
+function dismissReorderHint() {
+  const tip = document.querySelector('.drag-hint');
+  if (tip) { clearInterval(tip._timer); tip.classList.add('going'); setTimeout(() => tip.remove(), 250); }
+  document.querySelectorAll('li.hint-nudge').forEach((li) => li.classList.remove('hint-nudge'));
+  if (!settings.reorderHintSeen) { settings.reorderHintSeen = true; saveSettings(); }
 }
 function moveInFolder(i, dir) {
   const f = getFolder(currentFolder);
@@ -830,11 +1123,12 @@ function moveInFolder(i, dir) {
   renderFolder();
 }
 $('#folder-back').onclick = () => { settings.libView = 'folders'; saveSettings(); location.hash = '#/'; };
-$('#folder-reorder').onclick = () => { reorderMode = !reorderMode; renderFolder(); };
+$('#folder-add').onclick = $('#folder-empty-add').onclick = () => { const f = getFolder(currentFolder); if (f) openAddSongs(f); };
 $('#folder-menu').onclick = () => {
   const f = getFolder(currentFolder);
   if (!f) return;
   openModal(f.name, f.songIds.length + ' songs. Deleting a folder keeps the songs in your library.', [
+    { label: 'Add songs', run: () => openAddSongs(f) },
     { label: 'Rename', run: () => askText('Rename folder', 'Name', f.name, (name) => { f.name = name; saveFolders(); renderFolder(); }) },
     { label: 'Delete folder', danger: true, run: () => {
       if (!confirm('Delete the folder "' + f.name + '"? Songs stay in your library.')) return;
@@ -891,7 +1185,111 @@ function levelPicker(current, onPick) {
   return box;
 }
 
-function openSongSheet(song) {
+/* A pick list: rows you tick on and off, each with a round check bead. */
+function pickRow(title, sub, opts = {}) {
+  const b = el('button', 'pick-row' + (opts.locked ? ' locked' : ''));
+  b.type = 'button';
+  b.setAttribute('role', 'checkbox');
+  b.setAttribute('aria-checked', String(!!opts.checked));
+  if (opts.locked) b.setAttribute('aria-disabled', 'true');
+  if (opts.cover) b.appendChild(opts.cover);
+  const t = el('span', 'pick-text');
+  t.append(el('b', null, title));
+  if (sub) t.append(el('small', null, sub));
+  const tick = el('span', 'pick-tick');
+  tick.appendChild(svgIcon('check'));
+  b.append(t, tick);
+  b.onclick = () => {
+    if (opts.locked) return;
+    const on = b.getAttribute('aria-checked') !== 'true';
+    b.setAttribute('aria-checked', String(on));
+    if (navigator.vibrate) try { navigator.vibrate(6); } catch {}
+    opts.onToggle && opts.onToggle(on);
+  };
+  return b;
+}
+function pickConfirm(label) {
+  // the sheet's primary button, kept in step with how many rows are ticked
+  const btn = $('#modal-actions .btn.primary');
+  if (btn) { btn.textContent = label.text; btn.disabled = !label.n; }
+}
+
+/* Add songs to a folder: tick any number from the library, then confirm. */
+function openAddSongs(folder) {
+  const pool = songs.filter((s) => !folder.songIds.includes(s.id)).sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  if (!pool.length) {
+    openModal('Add songs', songs.length ? 'Every song in your library is already in this folder.' : 'Your library is empty. Find a song first, then add it here.', songs.length ? [{ label: 'OK' }] : [{ label: 'Find a song', primary: true, run: () => (location.hash = '#/search') }]);
+    return;
+  }
+  const chosen = new Set();
+  const body = el('div', 'stack pick');
+  let search = null;
+  if (pool.length > 6) {
+    search = el('input', 'input pick-search');
+    search.type = 'search';
+    search.placeholder = 'Filter by song or artist';
+    search.setAttribute('aria-label', 'Filter songs');
+    body.appendChild(search);
+  }
+  const list = el('div', 'pick-list');
+  const label = () => ({ n: chosen.size, text: chosen.size ? 'Add ' + chosen.size + (chosen.size === 1 ? ' song' : ' songs') : 'Add songs' });
+  for (const s of pool) {
+    const row = pickRow(s.title || 'Untitled', s.artist || '', { cover: coverNode(s), onToggle: (on) => { on ? chosen.add(s.id) : chosen.delete(s.id); pickConfirm(label()); } });
+    row.dataset.q = ((s.title || '') + ' ' + (s.artist || '')).toLowerCase();
+    list.appendChild(row);
+  }
+  body.appendChild(list);
+  if (search) search.oninput = () => { const q = search.value.trim().toLowerCase(); for (const r of list.children) r.hidden = !!q && !r.dataset.q.includes(q); };
+  openModal('Add to ' + folder.name, body, [
+    { label: 'Cancel' },
+    { label: 'Add songs', primary: true, run: () => {
+      if (!chosen.size) return;
+      // keep the library order the person ticked them in
+      for (const id of chosen) if (!folder.songIds.includes(id)) folder.songIds.push(id);
+      saveFolders();
+      toast('Added ' + chosen.size + (chosen.size === 1 ? ' song' : ' songs') + ' to ' + folder.name);
+      rerender();
+    } },
+  ]);
+  pickConfirm(label());
+}
+
+/* Add one song to folders: tick one or several, then confirm. Folders it is already in show as ticked. */
+function openFolderPicker(song, preselect) {
+  const chosen = new Set(preselect || []);
+  const body = el('div', 'stack pick');
+  const list = el('div', 'pick-list');
+  const label = () => ({ n: chosen.size, text: chosen.size ? 'Add to ' + (chosen.size === 1 ? '1 folder' : chosen.size + ' folders') : 'Add to folder' });
+  for (const f of folders) {
+    const has = f.songIds.includes(song.id);
+    const n = f.songIds.length;
+    list.appendChild(pickRow(f.name, has ? 'Already in here' : n + (n === 1 ? ' song' : ' songs'), {
+      locked: has, checked: has || chosen.has(f.id),
+      onToggle: (on) => { on ? chosen.add(f.id) : chosen.delete(f.id); pickConfirm(label()); },
+    }));
+  }
+  const nf = el('button', 'pick-row new');
+  nf.type = 'button';
+  const plus = el('span', 'pick-plus');
+  plus.appendChild(svgIcon('plus'));
+  nf.append(plus, el('span', 'pick-text', 'New folder'));
+  nf.onclick = () => askText('New folder', 'Name', '', (name) => { const f = createFolder(name); openFolderPicker(song, [...chosen, f.id]); });
+  list.appendChild(nf);
+  body.appendChild(list);
+  openModal('Add to folder', body, [
+    { label: 'Cancel' },
+    { label: 'Add to folder', primary: true, run: () => {
+      const picked = folders.filter((f) => chosen.has(f.id));
+      if (!picked.length) return;
+      for (const f of picked) toggleInFolder(f, song.id, true);
+      toast('Added to ' + (picked.length === 1 ? picked[0].name : picked.length + ' folders'));
+      rerender();
+    } },
+  ]);
+  pickConfirm(label());
+}
+
+function openSongSheet(song, folderId) {
   const body = el('div', 'stack');
   body.appendChild(el('div', 'field-label', 'How well do you know it?'));
   const c = comfortOf(song);
@@ -902,31 +1300,20 @@ function openSongSheet(song) {
     rerender();
   }));
   body.appendChild(el('div', 'field-label', 'Folders'));
-  const fo = el('div', 'folder-opts');
-  for (const f of folders) {
-    const lab = el('label', 'folder-opt');
-    const cb = el('input');
-    cb.type = 'checkbox';
-    cb.checked = f.songIds.includes(song.id);
-    cb.onchange = () => { toggleInFolder(f, song.id, cb.checked); rerender(); };
-    lab.append(cb, document.createTextNode(f.name));
-    fo.appendChild(lab);
-  }
-  const nf = el('button', 'btn small');
-  nf.type = 'button';
-  nf.append(svgIcon('plus'), document.createTextNode('New folder'));
-  nf.onclick = () => askText('New folder', 'Name', '', (name) => {
-    const f = createFolder(name);
-    toggleInFolder(f, song.id, true);
-    toast('Added to ' + name);
-    rerender();
-  });
-  fo.appendChild(nf);
+  const fo = el('div', 'folder-row');
+  const inF = folders.filter((f) => f.songIds.includes(song.id));
+  fo.appendChild(el('span', 'muted small grow', inF.length ? 'In ' + inF.map((f) => f.name).join(', ') : 'Not in any folders yet'));
+  const add = el('button', 'btn small');
+  add.type = 'button';
+  add.append(svgIcon('plus'), document.createTextNode('Add to folder'));
+  add.onclick = () => openFolderPicker(song);
+  fo.appendChild(add);
   body.appendChild(fo);
   const stats = [song.plays ? song.plays + (song.plays === 1 ? ' play' : ' plays') : 'Not played yet', song.bpm ? song.bpm + ' BPM' : ''].filter(Boolean).join(' · ');
   body.appendChild(el('div', 'muted small', stats));
   openModal(song.title || 'Song', body, [
     { label: 'Edit song', run: () => (location.hash = '#/edit/' + song.id) },
+    ...(folderId && getFolder(folderId) ? [{ label: 'Remove from ' + getFolder(folderId).name, run: () => { toggleInFolder(getFolder(folderId), song.id, false); rerender(); } }] : []),
     { label: 'Delete', danger: true, run: () => {
       if (!confirm('Delete "' + song.title + '"? This cannot be undone.')) return;
       deleteSong(song.id);
@@ -961,15 +1348,28 @@ $('#search-form').addEventListener('submit', async (e) => {
     results = results.filter((r) => r.syncedLyrics || r.plainLyrics);
     results.sort((a, b) => (b.syncedLyrics ? 1 : 0) - (a.syncedLyrics ? 1 : 0));
     status.textContent = results.length ? results.length + ' found. Tap one to preview.' : 'Nothing found. Try fewer words, or paste the lyrics yourself.';
-    for (const r of results.slice(0, 30)) {
+    results.slice(0, 30).forEach((r, i) => {
       const li = el('li');
+      li.style.setProperty('--i', Math.min(i, 14));
       const m = el('div', 'meta');
       m.append(el('div', 't', r.trackName), el('div', 'a', [r.artistName, r.albumName, r.duration ? fmtTime(r.duration) : ''].filter(Boolean).join(' · ')));
       li.appendChild(m);
       li.appendChild(el('span', r.syncedLyrics ? 'badge synced' : 'badge', r.syncedLyrics ? 'Synced' : 'Words only'));
       li.onclick = () => previewResult(r);
+      if (i === 0) {
+        // the best match blooms open: a few lines to recognise it, and a way to add it straight away
+        li.classList.add('bloom');
+        const plain = (r.plainLyrics || (r.syncedLyrics || '').replace(/^\s*\[[^\]]*\]\s?/gm, '')).split('\n').map((x) => x.trim()).filter(Boolean).slice(0, 3);
+        const pv = el('div', 'bloom-lines');
+        plain.forEach((line) => pv.appendChild(el('div', null, line)));
+        const add = el('button', 'btn primary', 'Add to library');
+        add.type = 'button';
+        add.onclick = (e) => { e.stopPropagation(); saveResult(r); };
+        li.append(pv, add);
+      }
       list.appendChild(li);
-    }
+    });
+    list.classList.add('strung');
   } catch (err) {
     status.textContent = navigator.onLine === false
       ? 'You are offline. Search needs internet, but your saved songs still work.'
@@ -1048,6 +1448,41 @@ $('#edit-save').onclick = () => {
 };
 
 /* ---------------- settings ---------------- */
+/* Segmented pickers: a <select data-seg="A|B|C"> becomes a row of chunky pill options.
+ * The select stays in the page (hidden) and still fires 'change', so nothing else needs to know. */
+function makePicker(select) {
+  const labels = select.dataset.seg.split('|');
+  const seg = el('div', 'segmented picker-seg');
+  seg.setAttribute('role', 'radiogroup');
+  const lab = select.getAttribute('aria-labelledby');
+  if (lab) seg.setAttribute('aria-labelledby', lab);
+  [...select.options].forEach((o, i) => {
+    const b = el('button', null, labels[i] || o.textContent);
+    b.type = 'button';
+    b.setAttribute('role', 'radio');
+    b.dataset.v = o.value;
+    b.onclick = () => {
+      if (select.value === o.value) return;
+      select.value = o.value;
+      select.dispatchEvent(new Event('change'));
+      syncPicker(select);
+    };
+    seg.appendChild(b);
+  });
+  select.hidden = true;
+  select.after(seg);
+  select._seg = seg;
+}
+function syncPicker(select) {
+  if (!select._seg) return;
+  for (const b of select._seg.children) {
+    const on = b.dataset.v === select.value;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-checked', String(on));
+  }
+}
+function syncPickers() { document.querySelectorAll('select[data-seg]').forEach(syncPicker); }
+document.querySelectorAll('select[data-seg]').forEach(makePicker);
 function openSettings() {
   $('#set-font').value = settings.fontSize;
   $('#set-font-out').textContent = settings.fontSize;
@@ -1060,6 +1495,7 @@ function openSettings() {
   $('#set-wake').checked = settings.keepAwake;
   $('#set-motion').checked = settings.motion;
   $('#set-covers').checked = settings.covers;
+  syncPickers();
   $('#app-version').textContent = 'Version ' + APP_VERSION + ' · ' + songs.length + ' songs · ' + folders.length + ' folders';
   show('settings');
 }
@@ -1078,7 +1514,7 @@ $('#backup-export').onclick = () => {
   const data = JSON.stringify({ app: 'lyrica', version: 2, exported: new Date().toISOString(), settings, meta, folders, songs }, null, 1);
   const a = el('a');
   a.href = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
-  a.download = 'lyrica-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+  a.download = 'stanze-backup-' + new Date().toISOString().slice(0, 10) + '.json';
   document.body.appendChild(a);
   a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
@@ -1108,7 +1544,7 @@ $('#backup-file').addEventListener('change', async (e) => {
     toast('Restored ' + data.songs.length + ' songs (' + added + ' new)');
     openSettings();
   } catch {
-    toast('That file is not a Lyrica backup');
+    toast('That file is not a Stanze backup');
   }
 });
 
@@ -1186,10 +1622,12 @@ const metro = {
   flash(at, accent) {
     const delay = Math.max(0, (at - this.ctx.currentTime) * 1000);
     setTimeout(() => {
-      const d = $('#p-beat');
-      d.classList.add('on');
+      // the click button gives a small ripple on each beat it sounds
+      const d = $('#p-metro');
+      d.classList.remove('tick', 'accent');
+      void d.offsetWidth;
+      d.classList.add('tick');
       d.classList.toggle('accent', accent);
-      setTimeout(() => d.classList.remove('on', 'accent'), 110);
     }, delay);
   },
   start(bpm, bpb, firstAt) {
@@ -1351,7 +1789,7 @@ function openTrackSheet(song, kind) {
     use.hidden = false;
     use.textContent = 'Use this video';
     if (!dur) say('Couldn\'t read how long this video is, so it can\'t be checked against the original.', '');
-    else if (!orig) say('Length ' + fmtTime(dur) + '. Lyrica doesn\'t know how long the original is, so it can\'t compare them.', '');
+    else if (!orig) say('Length ' + fmtTime(dur) + '. Stanze doesn\'t know how long the original is, so it can\'t compare them.', '');
     else {
       const diff = dur - orig;
       if (Math.abs(diff) <= 5) say('Length ' + fmtTime(dur) + ', which matches the original (' + fmtTime(orig) + ').', 'ok');
@@ -1714,7 +2152,7 @@ const player = {
       accentEvery = 1000;
     }
     const lead = 0.08;
-    this.countIn = { start: performance.now() + lead * 1000, beatMs: beatSec * 1000, beats, shown: -1, bpb, audioEnd: 0 };
+    this.countIn = { start: performance.now() + lead * 1000, beatMs: beatSec * 1000, beats, shown: -1, bpb: accentEvery, audioEnd: 0 };
     if (settings.clickSound && metro.ensure()) {
       const t0 = metro.ctx.currentTime + lead;
       for (let i = 0; i < beats; i++) metro.click(t0 + i * beatSec, i % accentEvery === 0);
@@ -1763,14 +2201,11 @@ const player = {
     $('#p-tempo-btn').classList.toggle('empty', !has);
     $('#p-tempo-btn').classList.toggle('suggested', suggested);
     $('#p-tempo-num').textContent = has ? String(this.playingBpm()) : 'Tap';
-    const sub = $('#p-tempo-sub');
-    if (!has || suggested) sub.textContent = !has ? 'to set tempo' : 'Check tempo';
-    else { sub.textContent = 'BPM'; sub.appendChild(el('span', 'tp-sig', ' · ' + timeSig(this.song.beatsPerBar))); }
-    $('#p-tempo-btn').setAttribute('aria-label', !has ? 'Set the tempo by tapping' : suggested ? 'Suggested tempo, tap to check it' : 'Song tempo');
+    $('#p-tempo-sub').textContent = !has ? 'tempo' : suggested ? 'check' : 'bpm';
+    $('#p-tempo-btn').setAttribute('aria-label', !has ? 'Set the tempo by tapping' : suggested ? 'Suggested tempo of ' + this.playingBpm() + ' BPM, tap to check it' : 'Tempo ' + this.playingBpm() + ' BPM, ' + timeSig(this.song.beatsPerBar));
     const video = this.usingVideo();
     $('#p-metro').setAttribute('aria-pressed', String(on && has && !video));
     $('#p-metro').classList.toggle('unavailable', !has || video);
-    $('#p-beat').hidden = !(on && has && !video);
     const note = $('#p-speed-note');
     note.hidden = pct === 100;
     note.textContent = 'Practising at ' + pct + '% of the real speed. Tap to reset.';
@@ -1785,7 +2220,7 @@ const player = {
     const song = this.song;
     const c = comfortOf(song);
     const body = el('div', 'stack');
-    body.appendChild(el('div', 'muted', 'How well do you know it now? This helps Lyrica suggest what to revisit.'));
+    body.appendChild(el('div', 'muted', 'How well do you know it now? This helps Stanze suggest what to revisit.'));
     body.appendChild(levelPicker(c ? c.level : null, (i) => { rateSong(song, i); closeModal(); toast('Marked as ' + LEVELS[i].label.toLowerCase()); }));
     const next = this.nextSong();
     const actions = [{ label: 'Play again', run: () => this.restart() }];
@@ -1801,7 +2236,7 @@ const player = {
       const idx = Math.floor((ts - ci.start) / ci.beatMs);
       if (idx < ci.beats) {
         // the count-in runs round the play button, one segment per beat
-        if (idx !== ci.shown) { ci.shown = idx; paintRing(Math.max(0, idx), ci.beats); }
+        if (idx !== ci.shown) { ci.shown = idx; paintRing(Math.max(0, idx), ci.beats, ci.beatMs, ci.bpb); }
       } else {
         this.countIn = null;
         paintRing(-1);
@@ -1872,21 +2307,22 @@ const player = {
     for (const [i, f] of next) if (this.lit.get(i) !== f) this.nodes[i].style.setProperty('--f', f);
     this.lit = next;
   },
-  /* Visual metronome: a row of soft dots, one per beat of the bar, for when the click is off.
-   * It counts from where playback started, the same grid the audible click uses. */
+  /* Visual metronome: a ring round the tempo button, one segment per beat of the bar.
+   * The segment for the current beat lights up (coral on the downbeat). It runs whether the
+   * click is on or muted, on the same grid the audible click uses. */
   paintDots() {
-    const box = $('#p-dots');
+    const ring = $('#p-beatring');
     const bpm = this.song.bpm;
-    const show = !!(bpm && this.playing && !this.countIn && !this.timing && !settings.metroOn && !this.usingVideo() && this.beatFrom != null);
-    if (!show) { if (!box.hidden) { box.hidden = true; this.dotBeat = -1; } return; }
+    const show = !!(bpm && this.playing && !this.countIn && !this.timing && !this.usingVideo() && this.beatFrom != null);
+    if (!show) { if (ring.classList.contains('live')) { ring.classList.remove('live'); this.dotBeat = -1; } return; }
     const bpb = this.song.beatsPerBar || 4;
-    if (box.childElementCount !== bpb) { box.innerHTML = ''; for (let i = 0; i < bpb; i++) box.appendChild(el('i', i === 0 ? 'down' : null)); this.dotBeat = -1; }
-    box.hidden = false;
-    const beat = Math.floor((this.t - this.beatFrom) / (60 / bpm) + 0.0001);
+    if (ring.childElementCount !== bpb) { ring.innerHTML = ringArcs(32, 32, 29, bpb, bpb > 6 ? 0.34 : 0.5); this.dotBeat = -1; }
+    ring.classList.add('live');
+    const beat = Math.floor((this.t - this.beatFrom) / (60 / (bpm * (this.song.speed || 1))) + 0.0001);
     if (beat === this.dotBeat || beat < 0) return;
     this.dotBeat = beat;
     const on = beat % bpb;
-    [...box.children].forEach((d, i) => d.classList.toggle('on', i === on));
+    [...ring.children].forEach((d, i) => d.setAttribute('class', i === on ? (i === 0 ? 'on down' : 'on') : ''));
   },
   /* Instrumental and intro cards sit in the lyric column, between the lines they separate.
    * Each shows how long the gap is, bar by bar, and "Back in 4, 3, 2, 1" at the end. */
@@ -2129,23 +2565,49 @@ const player = {
   },
 };
 
-/* ---------------- count-in ring: one segment per beat, round the play button ---------------- */
-function paintRing(on, beats) {
-  const ring = $('#p-ring');
-  if (!ring) return;
-  if (on < 0) { ring.classList.remove('live'); return; }
-  if (ring.childElementCount !== beats) {
-    const cx = 46, cy = 46, r = 42, gap = beats > 6 ? 0.22 : 0.32;
-    const step = (Math.PI * 2) / beats;
-    let h = '';
-    for (let k = 0; k < beats; k++) {
-      const a0 = -Math.PI / 2 + k * step + gap / 2, a1 = a0 + step - gap;
-      h += '<path d="M' + (cx + r * Math.cos(a0)).toFixed(2) + ' ' + (cy + r * Math.sin(a0)).toFixed(2) + ' A' + r + ' ' + r + ' 0 0 1 ' + (cx + r * Math.cos(a1)).toFixed(2) + ' ' + (cy + r * Math.sin(a1)).toFixed(2) + '"/>';
-    }
-    ring.innerHTML = h;
+/* Arcs round a circle, one per beat, with a small gap between them. pathLength=1 lets CSS sweep each one. */
+function ringArcs(cx, cy, r, beats, gap) {
+  const step = (Math.PI * 2) / beats;
+  let h = '';
+  for (let k = 0; k < beats; k++) {
+    const a0 = -Math.PI / 2 + k * step + gap / 2, a1 = a0 + step - gap;
+    h += '<path pathLength="1" d="M' + (cx + r * Math.cos(a0)).toFixed(2) + ' ' + (cy + r * Math.sin(a0)).toFixed(2) + ' A' + r + ' ' + r + ' 0 0 1 ' + (cx + r * Math.cos(a1)).toFixed(2) + ' ' + (cy + r * Math.sin(a1)).toFixed(2) + '"/>';
   }
+  return h;
+}
+
+/* ---------------- count-in: round the play button ----------------
+ * Each beat's segment sweeps full over the length of the beat, a ripple leaves the button,
+ * and the beat number pops up in the middle. When the count ends the ring lets go outwards. */
+function paintRing(on, beats, beatMs, bpb) {
+  const ring = $('#p-ring');
+  const wrap = $('#p-playwrap');
+  const num = $('#p-cinum');
+  if (!ring) return;
+  if (on < 0) {
+    if (ring.classList.contains('live')) {
+      ring.classList.add('go');
+      setTimeout(() => ring.classList.remove('live', 'go'), 420);
+    }
+    wrap.classList.remove('counting');
+    num.textContent = '';
+    return;
+  }
+  if (+ring.dataset.beats !== beats || !ring.querySelector('.seg')) {
+    const gap = beats > 6 ? 0.2 : 0.3;
+    const arcs = ringArcs(46, 46, 42, beats, gap);
+    ring.innerHTML = '<g class="track">' + arcs + '</g><g class="seg">' + arcs + '</g>';
+    ring.dataset.beats = beats;
+  }
+  ring.classList.remove('go');
   ring.classList.add('live');
-  [...ring.children].forEach((p, k) => p.setAttribute('class', k < on ? 'done' : k === on ? 'on' : ''));
+  ring.style.setProperty('--beat', (beatMs || 600) + 'ms');
+  [...ring.querySelector('.seg').children].forEach((p, k) => p.setAttribute('class', k < on ? 'done' : k === on ? 'on' + (bpb && k % bpb === 0 ? ' down' : '') : ''));
+  wrap.classList.add('counting');
+  // musicians count within the bar (1 2 3 4); a plain seconds count-in counts down
+  num.textContent = String(bpb && bpb < 100 ? (on % bpb) + 1 : beats - on);
+  num.classList.toggle('down', !!(bpb && bpb < 100 && on % bpb === 0));
+  for (const n of [num, wrap]) { n.classList.remove('pop'); void n.offsetWidth; n.classList.add('pop'); }
 }
 
 /* ---------------- the progress cord: knots, clues, tap to jump, drag to scrub ---------------- */
@@ -2402,17 +2864,95 @@ function openTempoSheet() {
   input.placeholder = '--';
   input.setAttribute('aria-label', 'Beats per minute');
   const unit = el('span', 'big-unit', 'BPM');
-  const mid = el('label', 'big-mid');
+  const mid = el('div', 'big-mid');
   mid.append(input, unit);
+  // The dial: turn the loop of cord to set the tempo. The bead pulses on every beat, so you can check it against the recording.
+  const DMIN = 40, DMAX = 240, R = 84, C = 94;
+  const ns = 'http://www.w3.org/2000/svg';
+  const dial = document.createElementNS(ns, 'svg');
+  dial.setAttribute('class', 'dial');
+  dial.setAttribute('viewBox', '0 0 188 188');
+  dial.setAttribute('role', 'slider');
+  dial.setAttribute('tabindex', '0');
+  dial.setAttribute('aria-label', 'Tempo dial. Turn it, or use the arrow keys.');
+  dial.setAttribute('aria-valuemin', '30');
+  dial.setAttribute('aria-valuemax', '300');
+  const angOf = (v) => 135 + (270 * (clamp(v, DMIN, DMAX) - DMIN)) / (DMAX - DMIN);
+  const pt = (a) => [C + R * Math.cos((a * Math.PI) / 180), C + R * Math.sin((a * Math.PI) / 180)];
+  const arc = (a0, a1) => { const [x0, y0] = pt(a0), [x1, y1] = pt(a1); return 'M' + x0.toFixed(2) + ' ' + y0.toFixed(2) + ' A' + R + ' ' + R + ' 0 ' + (a1 - a0 > 180 ? 1 : 0) + ' 1 ' + x1.toFixed(2) + ' ' + y1.toFixed(2); };
+  dial.innerHTML = '<path class="d-track" d="' + arc(135, 405) + '"/><path class="d-fill"/><circle class="d-hit" cx="94" cy="94" r="84"/><circle class="d-bead" r="11"/>';
+  const fillP = dial.querySelector('.d-fill'), beadC = dial.querySelector('.d-bead');
+  const drawDial = () => {
+    const a = angOf(bpm || 100);
+    fillP.setAttribute('d', bpm ? arc(135, Math.max(135.01, a)) : '');
+    const [x, y] = pt(a);
+    beadC.setAttribute('cx', x.toFixed(2));
+    beadC.setAttribute('cy', y.toFixed(2));
+    beadC.classList.toggle('none', !bpm);
+    dial.setAttribute('aria-valuenow', String(bpm || 0));
+    dial.setAttribute('aria-valuetext', bpm ? bpm + ' BPM' : 'No tempo yet');
+  };
+  let lastTick = 0;
+  const fromPointer = (e) => {
+    const r = dial.getBoundingClientRect();
+    const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+    let a = (Math.atan2(dy, dx) * 180) / Math.PI; // -180..180, 0 = right, 90 = down
+    if (a < 0) a += 360;
+    if (a < 45) a += 360; // the dial runs from 135deg (bottom left) round to 405deg (bottom right)
+    else if (a <= 135) a = a < 90 ? 405 : 135; // in the gap at the bottom: whichever end is nearer
+    const v = Math.round(DMIN + ((a - 135) / 270) * (DMAX - DMIN));
+    if (v === bpm) return;
+    bpm = v;
+    source = 'manual';
+    pad.textContent = 'Tap here on the beat';
+    if (Math.abs(v - lastTick) >= 5 && navigator.vibrate) { lastTick = v; try { navigator.vibrate(6); } catch { /* fine */ } }
+    sync();
+  };
+  let turning = false;
+  dial.addEventListener('pointerdown', (e) => {
+    const r = dial.getBoundingClientRect();
+    const dist = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+    if (dist < r.width * 0.3) return; // the middle is the number, which you can type into
+    e.preventDefault();
+    turning = true;
+    dial.classList.add('turning');
+    try { dial.setPointerCapture(e.pointerId); } catch { /* fine */ }
+    fromPointer(e);
+  });
+  dial.addEventListener('pointermove', (e) => { if (turning) fromPointer(e); });
+  const stopTurn = () => { turning = false; dial.classList.remove('turning'); };
+  dial.addEventListener('pointerup', stopTurn);
+  dial.addEventListener('pointercancel', stopTurn);
+  dial.addEventListener('keydown', (e) => {
+    const d = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1, PageUp: 10, PageDown: -10 }[e.key];
+    if (!d) return;
+    e.preventDefault();
+    nudge(d);
+  });
+  mid.prepend(dial);
   big.append(down, mid, up);
+  // the bead pulses on each beat of the tempo shown
+  let beatRaf = 0, beatFrom = performance.now(), shownBpm = null;
+  const beatLoop = (now) => {
+    if (!dial.isConnected) return;
+    if (bpm !== shownBpm) { shownBpm = bpm; beatFrom = now; }
+    if (bpm && !turning) {
+      const phase = ((now - beatFrom) / (60000 / bpm)) % 1;
+      const k = Math.exp(-phase * 7);
+      beadC.setAttribute('r', (11 + 5 * k).toFixed(2));
+      dial.style.setProperty('--beat', k.toFixed(3));
+    } else beadC.setAttribute('r', turning ? '15' : '11');
+    beatRaf = requestAnimationFrame(beatLoop);
+  };
+  beatRaf = requestAnimationFrame(beatLoop);
   // with no tempo yet, tapping is the first thing you see
   if (bpm) body.append(big, pad); else body.append(pad, big);
-  const sync = () => { input.value = bpm || ''; };
+  const sync = () => { input.value = bpm || ''; drawDial(); };
   sync();
   const nudge = (d) => { bpm = clamp((bpm || 100) + d, 30, 300); source = 'manual'; sync(); };
   down.onclick = () => nudge(-1);
   up.onclick = () => nudge(1);
-  input.addEventListener('input', () => { const n = parseInt(input.value, 10); bpm = n >= 30 && n <= 300 ? n : null; source = 'manual'; pad.textContent = 'Tap here on the beat'; });
+  input.addEventListener('input', () => { const n = parseInt(input.value, 10); bpm = n >= 30 && n <= 300 ? n : null; source = 'manual'; pad.textContent = 'Tap here on the beat'; drawDial(); });
   input.addEventListener('focus', () => input.select());
   const tap = makeTapper((n) => {
     if (!suggestion) { bpm = n; source = 'tap'; sync(); pad.textContent = n + ' BPM · keep tapping to refine'; return; }
@@ -2495,19 +3035,19 @@ function openPlaybackSheet() {
   if (player.synced && player.introSkipTo() > 0) {
     const lab = el('label', 'setting check');
     const cb = el('input');
-    cb.type = 'checkbox';
+    cb.type = 'checkbox'; cb.setAttribute('role', 'switch');
     cb.checked = !!song.skipIntro;
     cb.onchange = () => { song.skipIntro = cb.checked; upsertSong(song); };
-    lab.append(cb, document.createTextNode('Skip the intro (start ' + (song.bpm ? 'a bar' : 'a few seconds') + ' before the first line)'));
+    lab.append(cb, el('span', null, 'Skip the intro'));
     body.appendChild(lab);
   }
   if (player.gaps.some((g) => !g.intro)) {
     const lab = el('label', 'setting check');
     const cb = el('input');
-    cb.type = 'checkbox';
+    cb.type = 'checkbox'; cb.setAttribute('role', 'switch');
     cb.checked = !!settings.pauseGaps;
     cb.onchange = () => { settings.pauseGaps = cb.checked; saveSettings(); };
-    lab.append(cb, document.createTextNode('Pause at instrumentals, then count me back in'));
+    lab.append(cb, el('span', null, 'Pause at instrumentals'));
     body.appendChild(lab);
   }
   // display

@@ -1,13 +1,13 @@
 {
-  "name": "Lyrica",
-  "short_name": "Lyrica",
+  "name": "Stanze",
+  "short_name": "Stanze",
   "description": "Autoscrolling lyrics and chords for playing along.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0a1215",
-  "theme_color": "#0a1215",
+  "background_color": "#0a1417",
+  "theme_color": "#0a1417",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
