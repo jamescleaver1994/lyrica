@@ -798,6 +798,10 @@ textarea.input { border-radius: 24px; }
 .sheet-head .icon-btn { background: var(--surface-2); }
 .modal-body { padding: 8px 24px 18px; }
 .modal-actions { border-top: 0; padding: 10px 20px calc(16px + env(safe-area-inset-bottom)); }
+/* swipe down to close: follows the finger, springs back, or slides away */
+.modal-card { transition: transform .38s var(--spring); }
+.modal-card.swiping { transition: none; }
+.modal-card.swiped { transition: transform .22s ease-in; }
 @media (prefers-reduced-motion: reduce) { .modal-card { animation: none; } }
 
 /* Toast */
@@ -914,7 +918,11 @@ svg.thread path { fill: none; stroke: rgba(228, 253, 225, .18); stroke-width: 6;
 @keyframes thread-draw { to { stroke-dashoffset: 0; } }
 ul.threaded > li:not(.letter-head) { background: #12262b; }
 ul.threaded > li:first-of-type:not(.letter-head) { background: var(--teal-deep); }
-ul.threaded.numbered > li:first-of-type { background: var(--teal-deep); }
+/* in a folder the "up next" row is marked with a class, so it can follow a song being dragged to the top */
+ul.threaded.numbered > li:first-of-type:not(.up-next) { background: #12262b; }
+ul.threaded.numbered > li.up-next { background: var(--teal-deep); }
+ul.threaded.numbered > li { transition: background-color .35s var(--unspool); }
+ul.numbered .bead { transition: transform .3s var(--spring), background-color .35s var(--unspool); }
 
 /* Rows string themselves on, one after another */
 ul.threaded > li, ul.strung > li { animation: string-in .55s var(--unspool) both; animation-delay: calc(var(--i, 0) * 45ms); }
@@ -978,10 +986,10 @@ ul.numbered .bead:focus-visible { outline: 3px solid var(--text); outline-offset
 ul.reordering > li, ul.settled > li { animation: none; }
 ul.settled svg.thread path { animation: none; stroke-dashoffset: 0; }
 ul.reordering .bead { cursor: grabbing; }
-ul.threaded > li.making-room { transition: transform .34s var(--spring); }
-ul.threaded > li.lifted { z-index: 3; box-shadow: 0 18px 40px rgba(0, 0, 0, .5); transition: box-shadow .2s; }
+ul.threaded > li.making-room { transition: transform .34s var(--spring), background-color .35s var(--unspool); }
+ul.threaded > li.lifted { z-index: 3; box-shadow: 0 18px 40px rgba(0, 0, 0, .5); transition: box-shadow .2s, background-color .35s var(--unspool); }
 ul.threaded > li.lifted .bead { transform: scale(1.18); background: var(--accent); }
-ul.threaded > li.dropping { z-index: 3; transition: transform .26s var(--spring), box-shadow .26s; }
+ul.threaded > li.dropping { z-index: 3; transition: transform .26s var(--spring), box-shadow .26s, background-color .35s var(--unspool); }
 .bead.snap { animation: bead-snap .42s var(--spring); }
 @keyframes bead-snap { 0% { transform: scale(1.3); } 45% { transform: scale(.9); } 100% { transform: scale(1); } }
 @media (prefers-reduced-motion: reduce) { .bead.snap { animation: none; } ul.threaded > li.making-room, ul.threaded > li.dropping { transition: none; } }

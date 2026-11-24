@@ -97,6 +97,54 @@ function closeModal() {
 $('#modal-close').onclick = closeModal;
 $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
 
+/* Swipe a sheet down to close it. The drag starts from the handle and title, or from anywhere in the
+ * sheet when its content is already scrolled to the top, so scrolling a long sheet still works.
+ * Let go past a third of the way (or with a quick flick) and it slides away; otherwise it springs back. */
+(function sheetSwipe() {
+  const card = $('#modal .modal-card');
+  const body = $('#modal-body');
+  let drag = null;
+  const skip = (t) => t.closest('input, textarea, select, [contenteditable], .no-swipe, input[type=range]');
+  card.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1 || skip(e.target)) { drag = null; return; }
+    const inBody = body.contains(e.target);
+    const scroller = inBody ? e.target.closest('.modal-body, [data-scroll]') : null;
+    if (inBody && scroller && scroller.scrollTop > 0) { drag = null; return; }
+    drag = { y: e.touches[0].clientY, x: e.touches[0].clientX, t: performance.now(), dy: 0, live: false, inBody };
+  }, { passive: true });
+  card.addEventListener('touchmove', (e) => {
+    if (!drag) return;
+    const dy = e.touches[0].clientY - drag.y, dx = e.touches[0].clientX - drag.x;
+    if (!drag.live) {
+      if (Math.abs(dy) < 8 && Math.abs(dx) < 8) return;
+      // only a mostly-downward pull becomes a swipe; anything else is left to scroll or tap
+      if (dy <= 0 || Math.abs(dx) > dy || (drag.inBody && body.scrollTop > 0)) { drag = null; return; }
+      drag.live = true;
+      drag.y = e.touches[0].clientY;
+      card.classList.add('swiping');
+    }
+    drag.dy = Math.max(0, e.touches[0].clientY - drag.y);
+    card.style.transform = 'translateY(' + drag.dy + 'px)';
+    if (e.cancelable) e.preventDefault();
+  }, { passive: false });
+  const end = () => {
+    if (!drag || !drag.live) { drag = null; return; }
+    const { dy, t } = drag;
+    drag = null;
+    const fast = dy > 40 && dy / Math.max(1, performance.now() - t) > 0.6;
+    card.classList.remove('swiping');
+    if (dy > card.offsetHeight / 3 || fast) {
+      card.classList.add('swiped');
+      card.style.transform = 'translateY(100%)';
+      setTimeout(() => { closeModal(); card.classList.remove('swiped'); card.style.transform = ''; }, 220);
+    } else {
+      card.style.transform = '';
+    }
+  };
+  card.addEventListener('touchend', end);
+  card.addEventListener('touchcancel', end);
+})();
+
 function askText(title, label, value, onOk) {
   const wrap = el('label', null, label);
   const input = el('input', 'input');
@@ -754,12 +802,20 @@ function cordSim(ul) {
 function enableCordReorder(ul, folder) {
   const rows = () => [...ul.querySelectorAll(':scope > li')];
   const beadOf = (li) => li.querySelector('.bead');
-  const renumber = () => rows().forEach((li, i) => {
+  // paints the numbers and the "up next" highlight for an order; while dragging this is the order
+  // the list will have if you let go now, so the highlight follows the songs instead of jumping at the end
+  const paint = (order) => order.forEach((li, i) => {
     const b = beadOf(li);
     b.textContent = String(i + 1);
     b.classList.toggle('first', i === 0);
-    b.setAttribute('aria-label', 'Move ' + (li.dataset.title || 'song') + ', number ' + (i + 1) + ' of ' + rows().length + '. Drag, or use the up and down arrow keys.');
+    li.classList.toggle('up-next', i === 0);
   });
+  const renumber = () => {
+    const all = rows();
+    paint(all);
+    all.forEach((li, i) => beadOf(li).setAttribute('aria-label', 'Move ' + (li.dataset.title || 'song') + ', number ' + (i + 1) + ' of ' + all.length + '. Drag, or use the up and down arrow keys.'));
+  };
+  const orderIf = (all, from, to) => { const o = all.slice(); o.splice(to, 0, o.splice(from, 1)[0]); return o; };
   const commit = () => {
     folder.songIds = rows().map((li) => li.dataset.id);
     saveFolders();
@@ -820,7 +876,7 @@ function enableCordReorder(ul, folder) {
         // even though the row can't be dragged past the ends of the list)
         for (let k = from + 1; k < all.length; k++) if (mid > tops[k] + hts[k] * 0.35) t = k;
         for (let k = from - 1; k >= 0; k--) if (mid < tops[k] + hts[k] * 0.65) t = k;
-        if (t !== to) { to = t; if (navigator.vibrate) { try { navigator.vibrate(6); } catch { /* fine */ } } }
+        if (t !== to) { to = t; paint(orderIf(all, from, to)); if (navigator.vibrate) { try { navigator.vibrate(6); } catch { /* fine */ } } }
         all.forEach((r, k) => {
           if (k === from) return;
           const shift = from < to && k > from && k <= to ? -(hts[from] + gap) : from > to && k < from && k >= to ? hts[from] + gap : 0;
@@ -852,6 +908,7 @@ function enableCordReorder(ul, folder) {
         cancelAnimationFrame(raf);
         sim.pinHeld = null;
         if (!moved) { li.click(); return; } // a tap on the bead plays from that song
+        paint(orderIf(all, from, to));
         // glide into the new slot, then put the rows in their new order without any jump
         const slot = to === from ? 0 : to > from ? tops[to] + hts[to] - tops[from] - hts[from] : tops[to] - tops[from];
         li.classList.remove('lifted');
@@ -1328,8 +1385,18 @@ function rerender() {
 }
 
 /* ---------------- search (LRCLIB) ---------------- */
+let searchRun = 0; // bumped when a search starts or is cleared, so a slow answer can't refill a cleared screen
+/* Once a song is added, Find starts fresh next time instead of showing the old search. */
+function clearSearch() {
+  searchRun++;
+  $('#search-track').value = '';
+  $('#search-artist').value = '';
+  $('#search-status').textContent = '';
+  $('#search-results').innerHTML = '';
+}
 $('#search-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+  const run = ++searchRun;
   const track = $('#search-track').value.trim();
   const artist = $('#search-artist').value.trim();
   if (!track) return;
@@ -1345,6 +1412,7 @@ $('#search-form').addEventListener('submit', async (e) => {
     const res = await fetch(LRCLIB + '/search?' + params);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     let results = await res.json();
+    if (run !== searchRun) return;
     results = results.filter((r) => r.syncedLyrics || r.plainLyrics);
     results.sort((a, b) => (b.syncedLyrics ? 1 : 0) - (a.syncedLyrics ? 1 : 0));
     status.textContent = results.length ? results.length + ' found. Tap one to preview.' : 'Nothing found. Try fewer words, or paste the lyrics yourself.';
@@ -1371,6 +1439,7 @@ $('#search-form').addEventListener('submit', async (e) => {
     });
     list.classList.add('strung');
   } catch (err) {
+    if (run !== searchRun) return;
     status.textContent = navigator.onLine === false
       ? 'You are offline. Search needs internet, but your saved songs still work.'
       : 'Search failed (' + err.message + '). Try again in a moment.';
@@ -1395,6 +1464,7 @@ function saveResult(r) {
     queueEnrich(song);
     toast('Saved to your songs');
   }
+  clearSearch();
   location.hash = '#/play/' + song.id;
 }
 
