@@ -641,34 +641,235 @@ function threadList(ul, numbered) {
   });
   requestAnimationFrame(() => drawThread(ul));
 }
-function drawThread(ul) {
-  const old = ul.querySelector(':scope > svg.thread');
-  if (old) old.remove();
+/* The cord is drawn as a smooth line through the beads, swaying gently between them.
+ * A list being reordered adds a live displacement (ul._cordU) on top, from the string simulation below. */
+function cordGeom(ul) {
   const beads = [...ul.querySelectorAll(':scope > li > .bead')];
-  if (!beads.length || !ul.offsetParent) return;
+  if (!beads.length || !ul.offsetParent) return null;
+  const ur = ul.getBoundingClientRect();
+  const pins = beads.map((bd) => { const r = bd.getBoundingClientRect(); return [r.left - ur.left + r.width / 2, r.top - ur.top + r.height / 2]; });
+  // the cord's ends come from the resting layout, so they stay put while a row is being dragged
+  const rest = beads.map((bd) => bd.parentElement.offsetTop + bd.parentElement.offsetHeight / 2);
+  const ys = pins.map((p) => p[1]);
+  return { x: pins[0][0], ys, sorted: ys.slice().sort((p, q) => p - q), y0: Math.max(0, Math.min(...rest) - 26), y1: Math.max(...rest) + 60, h: ul.scrollHeight };
+}
+const CORD_STEP = 8;
+function cordRest(g, y) {
+  // between each pair of beads the cord bows out a little, alternating sides
+  const ys = [g.y0].concat(g.sorted, [g.y1]);
+  for (let j = 0; j < ys.length - 1; j++) {
+    if (y <= ys[j + 1] || j === ys.length - 2) {
+      const t = clamp((y - ys[j]) / Math.max(1, ys[j + 1] - ys[j]), 0, 1);
+      return (j % 2 ? 1 : -1) * 8 * Math.sin(Math.PI * t);
+    }
+  }
+  return 0;
+}
+function drawThread(ul) {
+  const g = cordGeom(ul);
+  let svg = ul.querySelector(':scope > svg.thread');
+  if (!g) { if (svg) svg.remove(); return; }
   const ns = 'http://www.w3.org/2000/svg';
-  const top = ul.getBoundingClientRect().top;
-  const pts = beads.map((b) => { const r = b.getBoundingClientRect(); return [r.left - ul.getBoundingClientRect().left + r.width / 2, r.top - top + r.height / 2]; });
-  const x = pts[0][0];
-  const h = ul.scrollHeight;
-  let d = 'M' + x + ' ' + Math.max(0, pts[0][1] - 26);
-  let prev = [x, Math.max(0, pts[0][1] - 26)];
-  pts.concat([[x, Math.min(h + 30, pts[pts.length - 1][1] + 60)]]).forEach((p, i) => {
-    const dy = p[1] - prev[1];
-    const sway = (i % 2 ? 1 : -1) * 9;
-    d += ' C' + (x + sway) + ' ' + (prev[1] + dy * 0.35) + ' ' + (x - sway) + ' ' + (p[1] - dy * 0.35) + ' ' + x + ' ' + p[1];
-    prev = p;
+  if (!svg) {
+    svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('class', 'thread');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.appendChild(document.createElementNS(ns, 'path')).setAttribute('pathLength', '1');
+    ul.prepend(svg);
+  }
+  svg.setAttribute('width', g.x * 2 + 60);
+  svg.setAttribute('height', g.h + 80);
+  const y0 = g.y0, y1 = g.y1;
+  const u = ul._cordU;
+  let d = '';
+  for (let y = y0, i = 0; y <= y1 + 0.01; y += CORD_STEP, i++) {
+    const x = g.x + cordRest(g, y) + (u && u.x[i] ? u.x[i] : 0);
+    d += (i ? ' L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1);
+  }
+  svg.firstChild.setAttribute('d', d);
+  return { g, y0, n: Math.floor((y1 - y0) / CORD_STEP) + 1 };
+}
+
+/* ----- Reorder a folder by dragging a bead along the cord -----
+ * The cord is a little string simulation: each sample can move sideways, pulled back by its neighbours
+ * (tension) and by the beads it passes through. Dragging a bead shakes it gently; dropping it gives
+ * one small snap that settles. Displacement is capped, so the cord bends but never folds or crosses. */
+function cordSim(ul) {
+  if (ul._sim) return ul._sim;
+  const sim = { ul, x: [], v: [], pinHeld: null, raf: 0, last: 0, quietFor: 0 };
+  ul._cordU = sim;
+  const MAXU = 22;
+  const step = (dt) => {
+    const info = drawThread(ul);
+    if (!info) return false;
+    const n = info.n;
+    while (sim.x.length < n) { sim.x.push(0); sim.v.push(0); }
+    sim.x.length = sim.v.length = n;
+    const pinIdx = info.g.ys.map((y) => Math.round((y - info.y0) / CORD_STEP));
+    const K = 900, DAMP = 5, HOME = 6, PIN = 260;
+    const subs = 4, h = dt / subs;
+    for (let s = 0; s < subs; s++) {
+      for (let i = 0; i < n; i++) {
+        const l = i > 0 ? sim.x[i - 1] : 0, r = i < n - 1 ? sim.x[i + 1] : 0;
+        let a = K * (l + r - 2 * sim.x[i]) / 4 - DAMP * sim.v[i] - HOME * sim.x[i];
+        sim.v[i] += a * h;
+      }
+      pinIdx.forEach((pi, k) => {
+        if (pi < 0 || pi >= n) return;
+        if (sim.pinHeld && sim.pinHeld.k === k) {
+          // the bead in your hand leads the cord a little sideways, plus a sway from how fast you move
+          const want = clamp(sim.pinHeld.dx, -MAXU, MAXU);
+          sim.v[pi] += (want - sim.x[pi]) * PIN * 2 * h;
+          sim.v[pi] *= 0.8;
+        } else {
+          sim.v[pi] += -sim.x[pi] * PIN * h;
+        }
+      });
+      for (let i = 0; i < n; i++) { sim.x[i] = clamp(sim.x[i] + sim.v[i] * h, -MAXU, MAXU); }
+    }
+    return true;
+  };
+  const loop = (now) => {
+    const dt = Math.min(0.033, (now - (sim.last || now)) / 1000) || 0.016;
+    sim.last = now;
+    if (!ul.isConnected || !step(dt)) { sim.stop(); return; }
+    const energy = sim.x.reduce((m, v) => Math.max(m, Math.abs(v)), 0) + sim.v.reduce((m, v) => Math.max(m, Math.abs(v)), 0) / 20;
+    sim.quietFor = energy < 0.15 && !sim.pinHeld ? sim.quietFor + dt : 0;
+    if (sim.quietFor > 0.25) { sim.stop(); drawThread(ul); return; }
+    sim.raf = requestAnimationFrame(loop);
+  };
+  sim.kick = () => { if (!sim.raf) { sim.last = 0; sim.raf = requestAnimationFrame(loop); } };
+  sim.stop = () => { cancelAnimationFrame(sim.raf); sim.raf = 0; sim.x = []; sim.v = []; ul._sim = null; ul._cordU = null; };
+  sim.pluck = (k, amount) => {
+    const g = cordGeom(ul);
+    if (!g) return;
+    const i = Math.round((g.ys[k] - g.y0) / CORD_STEP);
+    [-2, -1, 1, 2].forEach((o, j) => { if (sim.v[i + o] != null) sim.v[i + o] += amount * (j % 2 ? 1 : -1); });
+  };
+  ul._sim = sim;
+  sim.kick();
+  return sim;
+}
+
+function enableCordReorder(ul, folder) {
+  const rows = () => [...ul.querySelectorAll(':scope > li')];
+  const beadOf = (li) => li.querySelector('.bead');
+  const renumber = () => rows().forEach((li, i) => {
+    const b = beadOf(li);
+    b.textContent = String(i + 1);
+    b.classList.toggle('first', i === 0);
+    b.setAttribute('aria-label', 'Move ' + (li.dataset.title || 'song') + ', number ' + (i + 1) + ' of ' + rows().length + '. Drag, or use the up and down arrow keys.');
   });
-  const svg = document.createElementNS(ns, 'svg');
-  svg.setAttribute('class', 'thread');
-  svg.setAttribute('width', x * 2);
-  svg.setAttribute('height', h + 40);
-  svg.setAttribute('aria-hidden', 'true');
-  const path = document.createElementNS(ns, 'path');
-  path.setAttribute('d', d);
-  path.setAttribute('pathLength', '1');
-  svg.appendChild(path);
-  ul.prepend(svg);
+  const commit = () => {
+    folder.songIds = rows().map((li) => li.dataset.id);
+    saveFolders();
+    renumber();
+  };
+  const settle = (li, k) => {
+    const b = beadOf(li);
+    b.classList.remove('snap');
+    void b.offsetWidth;
+    b.classList.add('snap');
+    const sim = cordSim(ul);
+    sim.pluck(k, 110);
+    sim.kick();
+    if (navigator.vibrate) { try { navigator.vibrate(14); } catch { /* fine */ } }
+  };
+  rows().forEach((li) => {
+    const bead = beadOf(li);
+    bead.setAttribute('role', 'button');
+    bead.setAttribute('tabindex', '0');
+    bead.addEventListener('click', (e) => e.stopPropagation());
+    bead.addEventListener('keydown', (e) => {
+      const d = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
+      if (!d) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); li.click(); } return; }
+      e.preventDefault();
+      const all = rows();
+      const i = all.indexOf(li), j = i + d;
+      if (j < 0 || j >= all.length) return;
+      if (d < 0) ul.insertBefore(li, all[j]); else ul.insertBefore(all[j], li);
+      commit();
+      bead.focus();
+      settle(li, j);
+    });
+    bead.addEventListener('pointerdown', (e) => {
+      if (e.button > 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const all = rows();
+      const from = all.indexOf(li);
+      const tops = all.map((r) => r.offsetTop);
+      const hts = all.map((r) => r.offsetHeight);
+      const gap = all.length > 1 ? tops[1] - tops[0] - hts[0] : 8;
+      const startY = e.clientY + window.scrollY, startX = e.clientX;
+      let moved = false, to = from, lastY = e.clientY, vy = 0, raf = 0, curY = e.clientY, curX = e.clientX;
+      try { bead.setPointerCapture(e.pointerId); } catch { /* fine */ }
+      const sim = cordSim(ul);
+      const frame = () => {
+        // keep the list scrolling when you hold a bead near the top or bottom of the screen
+        const edge = 70, vh = window.innerHeight;
+        if (curY > vh - edge - 90) window.scrollBy(0, 6); else if (curY < edge + 60) window.scrollBy(0, -6);
+        const dy = curY + window.scrollY - startY;
+        const lo = -tops[from], hi = tops[all.length - 1] + hts[all.length - 1] - tops[from] - hts[from];
+        const y = clamp(dy, lo, hi);
+        li.style.transform = 'translateY(' + y + 'px) scale(1.02)';
+        const mid = tops[from] + y + hts[from] / 2;
+        // the slot you're over: past the middle of a row below, or above the middle of a row above
+        let t = from;
+        for (let k = from + 1; k < all.length; k++) if (mid > tops[k] + hts[k] / 2) t = k;
+        for (let k = from - 1; k >= 0; k--) if (mid < tops[k] + hts[k] / 2) t = k;
+        if (t !== to) { to = t; if (navigator.vibrate) { try { navigator.vibrate(6); } catch { /* fine */ } } }
+        all.forEach((r, k) => {
+          if (k === from) return;
+          const shift = from < to && k > from && k <= to ? -(hts[from] + gap) : from > to && k < from && k >= to ? hts[from] + gap : 0;
+          r.style.transform = shift ? 'translateY(' + shift + 'px)' : '';
+        });
+        sim.pinHeld = { k: from, dx: (curX - startX) * 0.35 + clamp(vy * 1.4, -18, 18) };
+        vy *= 0.85;
+        raf = requestAnimationFrame(frame);
+      };
+      const move = (ev) => {
+        if (!moved && Math.abs(ev.clientY + window.scrollY - startY) < 5 && Math.abs(ev.clientX - startX) < 5) return;
+        if (!moved) {
+          moved = true;
+          ul.classList.add('reordering', 'settled');
+          li.classList.add('lifted');
+          all.forEach((r) => { if (r !== li) r.classList.add('making-room'); });
+          raf = requestAnimationFrame(frame);
+        }
+        vy = vy * 0.6 + (ev.clientY - lastY) * 0.4;
+        lastY = ev.clientY;
+        curY = ev.clientY;
+        curX = ev.clientX;
+      };
+      const up = () => {
+        bead.removeEventListener('pointermove', move);
+        bead.removeEventListener('pointerup', up);
+        bead.removeEventListener('pointercancel', up);
+        cancelAnimationFrame(raf);
+        sim.pinHeld = null;
+        if (!moved) { li.click(); return; } // a tap on the bead plays from that song
+        // glide into the new slot, then put the rows in their new order without any jump
+        const slot = to === from ? 0 : to > from ? tops[to] + hts[to] - tops[from] - hts[from] : tops[to] - tops[from];
+        li.classList.remove('lifted');
+        li.classList.add('dropping');
+        li.style.transform = 'translateY(' + slot + 'px)';
+        setTimeout(() => {
+          all.forEach((r) => { r.classList.remove('making-room', 'dropping'); r.style.transition = 'none'; r.style.transform = ''; });
+          if (to !== from) { if (to > from) all[to].after(li); else all[to].before(li); }
+          ul.classList.remove('reordering');
+          void ul.offsetHeight;
+          all.forEach((r) => { r.style.transition = ''; });
+          if (to !== from) commit();
+          settle(li, to);
+        }, 260);
+      };
+      bead.addEventListener('pointermove', move);
+      bead.addEventListener('pointerup', up);
+      bead.addEventListener('pointercancel', up);
+    });
+  });
+  renumber();
 }
 window.addEventListener('resize', () => document.querySelectorAll('ul.threaded').forEach(drawThread));
 
@@ -860,12 +1061,12 @@ function renderFolder() {
   const total = list.reduce((s, x) => s + (x.duration || 0), 0);
   $('#folder-name').textContent = f.name;
   $('#folder-meta').textContent = list.length + (list.length === 1 ? ' song' : ' songs') + (total ? ' · ' + fmtTotal(total) : '');
-  $('#folder-reorder').textContent = reorderMode ? 'Done' : 'Reorder';
-  $('#folder-reorder').hidden = list.length < 2;
+  $('#folder-reorder').hidden = true; // reorder by dragging the beads on the cord instead
   const ul = $('#folder-list');
   ul.innerHTML = '';
-  list.forEach((s, i) => ul.appendChild(songTile(s, { reorder: reorderMode, index: i, count: list.length, folderId: f.id })));
+  list.forEach((s) => { const li = songTile(s, { folderId: f.id }); li.dataset.id = s.id; li.dataset.title = s.title || 'Untitled'; ul.appendChild(li); });
   threadList(ul, true);
+  if (list.length > 1) enableCordReorder(ul, f);
   $('#folder-empty').hidden = list.length > 0;
 }
 function moveInFolder(i, dir) {
