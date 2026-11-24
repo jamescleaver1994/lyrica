@@ -2502,17 +2502,95 @@ function openTempoSheet() {
   input.placeholder = '--';
   input.setAttribute('aria-label', 'Beats per minute');
   const unit = el('span', 'big-unit', 'BPM');
-  const mid = el('label', 'big-mid');
+  const mid = el('div', 'big-mid');
   mid.append(input, unit);
+  // The dial: turn the loop of cord to set the tempo. The bead pulses on every beat, so you can check it against the recording.
+  const DMIN = 40, DMAX = 240, R = 84, C = 94;
+  const ns = 'http://www.w3.org/2000/svg';
+  const dial = document.createElementNS(ns, 'svg');
+  dial.setAttribute('class', 'dial');
+  dial.setAttribute('viewBox', '0 0 188 188');
+  dial.setAttribute('role', 'slider');
+  dial.setAttribute('tabindex', '0');
+  dial.setAttribute('aria-label', 'Tempo dial. Turn it, or use the arrow keys.');
+  dial.setAttribute('aria-valuemin', '30');
+  dial.setAttribute('aria-valuemax', '300');
+  const angOf = (v) => 135 + (270 * (clamp(v, DMIN, DMAX) - DMIN)) / (DMAX - DMIN);
+  const pt = (a) => [C + R * Math.cos((a * Math.PI) / 180), C + R * Math.sin((a * Math.PI) / 180)];
+  const arc = (a0, a1) => { const [x0, y0] = pt(a0), [x1, y1] = pt(a1); return 'M' + x0.toFixed(2) + ' ' + y0.toFixed(2) + ' A' + R + ' ' + R + ' 0 ' + (a1 - a0 > 180 ? 1 : 0) + ' 1 ' + x1.toFixed(2) + ' ' + y1.toFixed(2); };
+  dial.innerHTML = '<path class="d-track" d="' + arc(135, 405) + '"/><path class="d-fill"/><circle class="d-hit" cx="94" cy="94" r="84"/><circle class="d-bead" r="11"/>';
+  const fillP = dial.querySelector('.d-fill'), beadC = dial.querySelector('.d-bead');
+  const drawDial = () => {
+    const a = angOf(bpm || 100);
+    fillP.setAttribute('d', bpm ? arc(135, Math.max(135.01, a)) : '');
+    const [x, y] = pt(a);
+    beadC.setAttribute('cx', x.toFixed(2));
+    beadC.setAttribute('cy', y.toFixed(2));
+    beadC.classList.toggle('none', !bpm);
+    dial.setAttribute('aria-valuenow', String(bpm || 0));
+    dial.setAttribute('aria-valuetext', bpm ? bpm + ' BPM' : 'No tempo yet');
+  };
+  let lastTick = 0;
+  const fromPointer = (e) => {
+    const r = dial.getBoundingClientRect();
+    const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+    let a = (Math.atan2(dy, dx) * 180) / Math.PI; // -180..180, 0 = right, 90 = down
+    if (a < 0) a += 360;
+    if (a < 45) a += 360; // the dial runs from 135deg (bottom left) round to 405deg (bottom right)
+    else if (a <= 135) a = a < 90 ? 405 : 135; // in the gap at the bottom: whichever end is nearer
+    const v = Math.round(DMIN + ((a - 135) / 270) * (DMAX - DMIN));
+    if (v === bpm) return;
+    bpm = v;
+    source = 'manual';
+    pad.textContent = 'Tap here on the beat';
+    if (Math.abs(v - lastTick) >= 5 && navigator.vibrate) { lastTick = v; try { navigator.vibrate(6); } catch { /* fine */ } }
+    sync();
+  };
+  let turning = false;
+  dial.addEventListener('pointerdown', (e) => {
+    const r = dial.getBoundingClientRect();
+    const dist = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+    if (dist < r.width * 0.3) return; // the middle is the number, which you can type into
+    e.preventDefault();
+    turning = true;
+    dial.classList.add('turning');
+    try { dial.setPointerCapture(e.pointerId); } catch { /* fine */ }
+    fromPointer(e);
+  });
+  dial.addEventListener('pointermove', (e) => { if (turning) fromPointer(e); });
+  const stopTurn = () => { turning = false; dial.classList.remove('turning'); };
+  dial.addEventListener('pointerup', stopTurn);
+  dial.addEventListener('pointercancel', stopTurn);
+  dial.addEventListener('keydown', (e) => {
+    const d = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1, PageUp: 10, PageDown: -10 }[e.key];
+    if (!d) return;
+    e.preventDefault();
+    nudge(d);
+  });
+  mid.prepend(dial);
   big.append(down, mid, up);
+  // the bead pulses on each beat of the tempo shown
+  let beatRaf = 0, beatFrom = performance.now(), shownBpm = null;
+  const beatLoop = (now) => {
+    if (!dial.isConnected) return;
+    if (bpm !== shownBpm) { shownBpm = bpm; beatFrom = now; }
+    if (bpm && !turning) {
+      const phase = ((now - beatFrom) / (60000 / bpm)) % 1;
+      const k = Math.exp(-phase * 7);
+      beadC.setAttribute('r', (11 + 5 * k).toFixed(2));
+      dial.style.setProperty('--beat', k.toFixed(3));
+    } else beadC.setAttribute('r', turning ? '15' : '11');
+    beatRaf = requestAnimationFrame(beatLoop);
+  };
+  beatRaf = requestAnimationFrame(beatLoop);
   // with no tempo yet, tapping is the first thing you see
   if (bpm) body.append(big, pad); else body.append(pad, big);
-  const sync = () => { input.value = bpm || ''; };
+  const sync = () => { input.value = bpm || ''; drawDial(); };
   sync();
   const nudge = (d) => { bpm = clamp((bpm || 100) + d, 30, 300); source = 'manual'; sync(); };
   down.onclick = () => nudge(-1);
   up.onclick = () => nudge(1);
-  input.addEventListener('input', () => { const n = parseInt(input.value, 10); bpm = n >= 30 && n <= 300 ? n : null; source = 'manual'; pad.textContent = 'Tap here on the beat'; });
+  input.addEventListener('input', () => { const n = parseInt(input.value, 10); bpm = n >= 30 && n <= 300 ? n : null; source = 'manual'; pad.textContent = 'Tap here on the beat'; drawDial(); });
   input.addEventListener('focus', () => input.select());
   const tap = makeTapper((n) => {
     if (!suggestion) { bpm = n; source = 'tap'; sync(); pad.textContent = n + ' BPM · keep tapping to refine'; return; }

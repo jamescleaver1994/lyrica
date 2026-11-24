@@ -947,13 +947,17 @@ ul.threaded > li, ul.strung > li { animation: string-in .55s var(--unspool) both
   position: relative; justify-self: center; width: 188px; height: 188px; border-radius: 50%;
   flex-direction: column; align-items: center; justify-content: center; gap: 0;
 }
-.big-mid::before {
-  content: ""; position: absolute; inset: 0; border-radius: 50%;
-  background: conic-gradient(from -90deg, var(--text) 0 58%, var(--accent) 58% 76%, rgba(228, 253, 225, .16) 76%);
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 7px), #000 calc(100% - 6px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 7px), #000 calc(100% - 6px));
-}
-.big-mid::after { content: ""; position: absolute; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); left: 50%; bottom: -7px; margin-left: -10px; box-shadow: 0 0 0 4px var(--surface-raised); }
+.big-mid .dial { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; touch-action: none; cursor: grab; z-index: 2; pointer-events: none; }
+.big-mid .big-bpm { max-width: 120px; }
+.big-mid .dial:focus { outline: none; }
+.big-mid .dial:focus-visible { outline: 3px solid var(--text); outline-offset: 6px; border-radius: 50%; }
+.dial .d-track { fill: none; stroke: rgba(228, 253, 225, .16); stroke-width: 8; stroke-linecap: round; }
+.dial .d-fill { fill: none; stroke: var(--text); stroke-width: 8; stroke-linecap: round; }
+.dial .d-hit { fill: none; stroke: transparent; stroke-width: 44; pointer-events: stroke; }
+.dial .d-bead { fill: var(--accent); stroke: var(--surface-raised); stroke-width: 4; }
+.dial .d-bead.none { display: none; }
+.dial.turning .d-fill, .dial.turning .d-track { stroke-width: 12; }
+.big-mid .big-bpm, .big-mid .big-unit { position: relative; z-index: 1; }
 .big-bpm { font: 800 64px/1 var(--font-display); letter-spacing: -0.05em; width: 3.2ch; }
 .big-unit { font: 600 13px var(--font-body); letter-spacing: 0; color: var(--muted); text-transform: lowercase; }
 .tap-pad {
@@ -964,3 +968,4 @@ ul.threaded > li, ul.strung > li { animation: string-in .55s var(--unspool) both
 .tap-pad.lead { min-height: 110px; }
 .tap-pad.hit { animation: none; transform: scale(.97); }
 .lib-list > ul.threaded { display: flex; flex-direction: column; gap: 8px; }
+.big-stepper .big-mid { display: flex; flex-direction: column; align-items: center; justify-content: center; }
