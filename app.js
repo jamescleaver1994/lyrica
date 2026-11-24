@@ -816,8 +816,10 @@ function enableCordReorder(ul, folder) {
         const mid = tops[from] + y + hts[from] / 2;
         // the slot you're over: past the middle of a row below, or above the middle of a row above
         let t = from;
-        for (let k = from + 1; k < all.length; k++) if (mid > tops[k] + hts[k] / 2) t = k;
-        for (let k = from - 1; k >= 0; k--) if (mid < tops[k] + hts[k] / 2) t = k;
+        // (a third of the way into a row is enough, so the first and last slots can be reached
+        // even though the row can't be dragged past the ends of the list)
+        for (let k = from + 1; k < all.length; k++) if (mid > tops[k] + hts[k] * 0.35) t = k;
+        for (let k = from - 1; k >= 0; k--) if (mid < tops[k] + hts[k] * 0.65) t = k;
         if (t !== to) { to = t; if (navigator.vibrate) { try { navigator.vibrate(6); } catch { /* fine */ } } }
         all.forEach((r, k) => {
           if (k === from) return;
@@ -832,6 +834,7 @@ function enableCordReorder(ul, folder) {
         if (!moved && Math.abs(ev.clientY + window.scrollY - startY) < 5 && Math.abs(ev.clientX - startX) < 5) return;
         if (!moved) {
           moved = true;
+          dismissReorderHint();
           ul.classList.add('reordering', 'settled');
           li.classList.add('lifted');
           all.forEach((r) => { if (r !== li) r.classList.add('making-room'); });
@@ -1071,7 +1074,42 @@ function renderFolder() {
   list.forEach((s) => { const li = songTile(s, { folderId: f.id }); li.dataset.id = s.id; li.dataset.title = s.title || 'Untitled'; ul.appendChild(li); });
   threadList(ul, true);
   if (list.length > 1) enableCordReorder(ul, f);
+  $('#folder-drag-note').hidden = list.length < 2;
+  if (list.length > 1 && !settings.reorderHintSeen) setTimeout(() => showReorderHint(ul), 700);
   $('#folder-empty').hidden = list.length > 0;
+}
+/* The first time someone has a folder with two or more songs, show them the beads can be dragged:
+ * the first row nudges down along the cord and back, with a short note beside it. After that a
+ * small "Drag the numbers to reorder" line under the folder's title keeps reminding them. */
+function showReorderHint(ul) {
+  if (settings.reorderHintSeen || $('#view-folder').hidden || document.querySelector('.drag-hint')) return;
+  const li = ul.querySelector(':scope > li');
+  if (!li) return;
+  const tip = el('div', 'drag-hint');
+  tip.setAttribute('role', 'status');
+  tip.append(el('span', null, 'Hold a number and drag it up or down to change the order'));
+  const ok = el('button', 'btn small', 'Got it');
+  ok.type = 'button';
+  ok.onclick = dismissReorderHint;
+  tip.appendChild(ok);
+  li.after(tip);
+  tip.style.top = (li.offsetTop + li.offsetHeight + 6) + 'px';
+  const nudge = () => {
+    if (!tip.isConnected) return;
+    li.classList.remove('hint-nudge');
+    void li.offsetWidth;
+    li.classList.add('hint-nudge');
+    const sim = ul._sim || cordSim(ul);
+    setTimeout(() => { sim.pluck(0, 60); sim.kick(); }, 380);
+  };
+  nudge();
+  tip._timer = setInterval(nudge, 3200);
+}
+function dismissReorderHint() {
+  const tip = document.querySelector('.drag-hint');
+  if (tip) { clearInterval(tip._timer); tip.classList.add('going'); setTimeout(() => tip.remove(), 250); }
+  document.querySelectorAll('li.hint-nudge').forEach((li) => li.classList.remove('hint-nudge'));
+  if (!settings.reorderHintSeen) { settings.reorderHintSeen = true; saveSettings(); }
 }
 function moveInFolder(i, dir) {
   const f = getFolder(currentFolder);
