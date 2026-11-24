@@ -618,7 +618,7 @@ function songTile(song, opts = {}) {
     li.appendChild(r);
   } else {
     const more = iconBtn('more', 'Song options');
-    more.onclick = (e) => { e.stopPropagation(); openSongSheet(song); };
+    more.onclick = (e) => { e.stopPropagation(); openSongSheet(song, opts.folderId); };
     li.appendChild(more);
     li.onclick = () => (location.hash = '#/play/' + song.id + (opts.folderId ? '/' + opts.folderId : ''));
   }
@@ -920,7 +920,12 @@ function renderLibrary() {
     const newBtn = el('button', 'btn');
     newBtn.type = 'button';
     newBtn.append(svgIcon('plus'), document.createTextNode('New folder'));
-    newBtn.onclick = () => askText('New folder', 'Name, e.g. "Friday setlist" or "Acoustic"', '', (name) => (location.hash = '#/folder/' + createFolder(name).id));
+    newBtn.onclick = () => askText('New folder', 'Name, e.g. "Friday setlist" or "Acoustic"', '', (name) => {
+      const f = createFolder(name);
+      location.hash = '#/folder/' + f.id;
+      // a new folder is empty, so go straight on to choosing its songs
+      if (songs.length) setTimeout(() => openAddSongs(f), 260);
+    });
     box.appendChild(newBtn);
     const ul = el('ul', 'list');
     for (const f of folders.filter((f) => !q || f.name.toLowerCase().includes(q))) {
@@ -1061,7 +1066,6 @@ function renderFolder() {
   const total = list.reduce((s, x) => s + (x.duration || 0), 0);
   $('#folder-name').textContent = f.name;
   $('#folder-meta').textContent = list.length + (list.length === 1 ? ' song' : ' songs') + (total ? ' · ' + fmtTotal(total) : '');
-  $('#folder-reorder').hidden = true; // reorder by dragging the beads on the cord instead
   const ul = $('#folder-list');
   ul.innerHTML = '';
   list.forEach((s) => { const li = songTile(s, { folderId: f.id }); li.dataset.id = s.id; li.dataset.title = s.title || 'Untitled'; ul.appendChild(li); });
@@ -1081,11 +1085,12 @@ function moveInFolder(i, dir) {
   renderFolder();
 }
 $('#folder-back').onclick = () => { settings.libView = 'folders'; saveSettings(); location.hash = '#/'; };
-$('#folder-reorder').onclick = () => { reorderMode = !reorderMode; renderFolder(); };
+$('#folder-add').onclick = $('#folder-empty-add').onclick = () => { const f = getFolder(currentFolder); if (f) openAddSongs(f); };
 $('#folder-menu').onclick = () => {
   const f = getFolder(currentFolder);
   if (!f) return;
   openModal(f.name, f.songIds.length + ' songs. Deleting a folder keeps the songs in your library.', [
+    { label: 'Add songs', run: () => openAddSongs(f) },
     { label: 'Rename', run: () => askText('Rename folder', 'Name', f.name, (name) => { f.name = name; saveFolders(); renderFolder(); }) },
     { label: 'Delete folder', danger: true, run: () => {
       if (!confirm('Delete the folder "' + f.name + '"? Songs stay in your library.')) return;
@@ -1142,7 +1147,111 @@ function levelPicker(current, onPick) {
   return box;
 }
 
-function openSongSheet(song) {
+/* A pick list: rows you tick on and off, each with a round check bead. */
+function pickRow(title, sub, opts = {}) {
+  const b = el('button', 'pick-row' + (opts.locked ? ' locked' : ''));
+  b.type = 'button';
+  b.setAttribute('role', 'checkbox');
+  b.setAttribute('aria-checked', String(!!opts.checked));
+  if (opts.locked) b.setAttribute('aria-disabled', 'true');
+  if (opts.cover) b.appendChild(opts.cover);
+  const t = el('span', 'pick-text');
+  t.append(el('b', null, title));
+  if (sub) t.append(el('small', null, sub));
+  const tick = el('span', 'pick-tick');
+  tick.appendChild(svgIcon('check'));
+  b.append(t, tick);
+  b.onclick = () => {
+    if (opts.locked) return;
+    const on = b.getAttribute('aria-checked') !== 'true';
+    b.setAttribute('aria-checked', String(on));
+    if (navigator.vibrate) try { navigator.vibrate(6); } catch {}
+    opts.onToggle && opts.onToggle(on);
+  };
+  return b;
+}
+function pickConfirm(label) {
+  // the sheet's primary button, kept in step with how many rows are ticked
+  const btn = $('#modal-actions .btn.primary');
+  if (btn) { btn.textContent = label.text; btn.disabled = !label.n; }
+}
+
+/* Add songs to a folder: tick any number from the library, then confirm. */
+function openAddSongs(folder) {
+  const pool = songs.filter((s) => !folder.songIds.includes(s.id)).sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  if (!pool.length) {
+    openModal('Add songs', songs.length ? 'Every song in your library is already in this folder.' : 'Your library is empty. Find a song first, then add it here.', songs.length ? [{ label: 'OK' }] : [{ label: 'Find a song', primary: true, run: () => (location.hash = '#/search') }]);
+    return;
+  }
+  const chosen = new Set();
+  const body = el('div', 'stack pick');
+  let search = null;
+  if (pool.length > 6) {
+    search = el('input', 'input pick-search');
+    search.type = 'search';
+    search.placeholder = 'Filter by song or artist';
+    search.setAttribute('aria-label', 'Filter songs');
+    body.appendChild(search);
+  }
+  const list = el('div', 'pick-list');
+  const label = () => ({ n: chosen.size, text: chosen.size ? 'Add ' + chosen.size + (chosen.size === 1 ? ' song' : ' songs') : 'Add songs' });
+  for (const s of pool) {
+    const row = pickRow(s.title || 'Untitled', s.artist || '', { cover: coverNode(s), onToggle: (on) => { on ? chosen.add(s.id) : chosen.delete(s.id); pickConfirm(label()); } });
+    row.dataset.q = ((s.title || '') + ' ' + (s.artist || '')).toLowerCase();
+    list.appendChild(row);
+  }
+  body.appendChild(list);
+  if (search) search.oninput = () => { const q = search.value.trim().toLowerCase(); for (const r of list.children) r.hidden = !!q && !r.dataset.q.includes(q); };
+  openModal('Add to ' + folder.name, body, [
+    { label: 'Cancel' },
+    { label: 'Add songs', primary: true, run: () => {
+      if (!chosen.size) return;
+      // keep the library order the person ticked them in
+      for (const id of chosen) if (!folder.songIds.includes(id)) folder.songIds.push(id);
+      saveFolders();
+      toast('Added ' + chosen.size + (chosen.size === 1 ? ' song' : ' songs') + ' to ' + folder.name);
+      rerender();
+    } },
+  ]);
+  pickConfirm(label());
+}
+
+/* Add one song to folders: tick one or several, then confirm. Folders it is already in show as ticked. */
+function openFolderPicker(song, preselect) {
+  const chosen = new Set(preselect || []);
+  const body = el('div', 'stack pick');
+  const list = el('div', 'pick-list');
+  const label = () => ({ n: chosen.size, text: chosen.size ? 'Add to ' + (chosen.size === 1 ? '1 folder' : chosen.size + ' folders') : 'Add to folder' });
+  for (const f of folders) {
+    const has = f.songIds.includes(song.id);
+    const n = f.songIds.length;
+    list.appendChild(pickRow(f.name, has ? 'Already in here' : n + (n === 1 ? ' song' : ' songs'), {
+      locked: has, checked: has || chosen.has(f.id),
+      onToggle: (on) => { on ? chosen.add(f.id) : chosen.delete(f.id); pickConfirm(label()); },
+    }));
+  }
+  const nf = el('button', 'pick-row new');
+  nf.type = 'button';
+  const plus = el('span', 'pick-plus');
+  plus.appendChild(svgIcon('plus'));
+  nf.append(plus, el('span', 'pick-text', 'New folder'));
+  nf.onclick = () => askText('New folder', 'Name', '', (name) => { const f = createFolder(name); openFolderPicker(song, [...chosen, f.id]); });
+  list.appendChild(nf);
+  body.appendChild(list);
+  openModal('Add to folder', body, [
+    { label: 'Cancel' },
+    { label: 'Add to folder', primary: true, run: () => {
+      const picked = folders.filter((f) => chosen.has(f.id));
+      if (!picked.length) return;
+      for (const f of picked) toggleInFolder(f, song.id, true);
+      toast('Added to ' + (picked.length === 1 ? picked[0].name : picked.length + ' folders'));
+      rerender();
+    } },
+  ]);
+  pickConfirm(label());
+}
+
+function openSongSheet(song, folderId) {
   const body = el('div', 'stack');
   body.appendChild(el('div', 'field-label', 'How well do you know it?'));
   const c = comfortOf(song);
@@ -1153,32 +1262,20 @@ function openSongSheet(song) {
     rerender();
   }));
   body.appendChild(el('div', 'field-label', 'Folders'));
-  const fo = el('div', 'folder-opts');
-  for (const f of folders) {
-    const lab = el('label', 'setting check folder-opt');
-    const cb = el('input');
-    cb.type = 'checkbox';
-    cb.setAttribute('role', 'switch');
-    cb.checked = f.songIds.includes(song.id);
-    cb.onchange = () => { toggleInFolder(f, song.id, cb.checked); rerender(); };
-    lab.append(cb, el('span', null, f.name));
-    fo.appendChild(lab);
-  }
-  const nf = el('button', 'btn small');
-  nf.type = 'button';
-  nf.append(svgIcon('plus'), document.createTextNode('New folder'));
-  nf.onclick = () => askText('New folder', 'Name', '', (name) => {
-    const f = createFolder(name);
-    toggleInFolder(f, song.id, true);
-    toast('Added to ' + name);
-    rerender();
-  });
-  fo.appendChild(nf);
+  const fo = el('div', 'folder-row');
+  const inF = folders.filter((f) => f.songIds.includes(song.id));
+  fo.appendChild(el('span', 'muted small grow', inF.length ? 'In ' + inF.map((f) => f.name).join(', ') : 'Not in any folders yet'));
+  const add = el('button', 'btn small');
+  add.type = 'button';
+  add.append(svgIcon('plus'), document.createTextNode('Add to folder'));
+  add.onclick = () => openFolderPicker(song);
+  fo.appendChild(add);
   body.appendChild(fo);
   const stats = [song.plays ? song.plays + (song.plays === 1 ? ' play' : ' plays') : 'Not played yet', song.bpm ? song.bpm + ' BPM' : ''].filter(Boolean).join(' · ');
   body.appendChild(el('div', 'muted small', stats));
   openModal(song.title || 'Song', body, [
     { label: 'Edit song', run: () => (location.hash = '#/edit/' + song.id) },
+    ...(folderId && getFolder(folderId) ? [{ label: 'Remove from ' + getFolder(folderId).name, run: () => { toggleInFolder(getFolder(folderId), song.id, false); rerender(); } }] : []),
     { label: 'Delete', danger: true, run: () => {
       if (!confirm('Delete "' + song.title + '"? This cannot be undone.')) return;
       deleteSong(song.id);
@@ -1487,10 +1584,12 @@ const metro = {
   flash(at, accent) {
     const delay = Math.max(0, (at - this.ctx.currentTime) * 1000);
     setTimeout(() => {
-      const d = $('#p-beat');
-      d.classList.add('on');
+      // the click button gives a small ripple on each beat it sounds
+      const d = $('#p-metro');
+      d.classList.remove('tick', 'accent');
+      void d.offsetWidth;
+      d.classList.add('tick');
       d.classList.toggle('accent', accent);
-      setTimeout(() => d.classList.remove('on', 'accent'), 110);
     }, delay);
   },
   start(bpm, bpb, firstAt) {
@@ -2015,7 +2114,7 @@ const player = {
       accentEvery = 1000;
     }
     const lead = 0.08;
-    this.countIn = { start: performance.now() + lead * 1000, beatMs: beatSec * 1000, beats, shown: -1, bpb, audioEnd: 0 };
+    this.countIn = { start: performance.now() + lead * 1000, beatMs: beatSec * 1000, beats, shown: -1, bpb: accentEvery, audioEnd: 0 };
     if (settings.clickSound && metro.ensure()) {
       const t0 = metro.ctx.currentTime + lead;
       for (let i = 0; i < beats; i++) metro.click(t0 + i * beatSec, i % accentEvery === 0);
@@ -2064,14 +2163,11 @@ const player = {
     $('#p-tempo-btn').classList.toggle('empty', !has);
     $('#p-tempo-btn').classList.toggle('suggested', suggested);
     $('#p-tempo-num').textContent = has ? String(this.playingBpm()) : 'Tap';
-    const sub = $('#p-tempo-sub');
-    if (!has || suggested) sub.textContent = !has ? 'tempo' : 'check';
-    else { sub.textContent = 'BPM'; sub.appendChild(el('span', 'tp-sig', ' · ' + timeSig(this.song.beatsPerBar))); }
-    $('#p-tempo-btn').setAttribute('aria-label', !has ? 'Set the tempo by tapping' : suggested ? 'Suggested tempo, tap to check it' : 'Song tempo');
+    $('#p-tempo-sub').textContent = !has ? 'tempo' : suggested ? 'check' : 'bpm';
+    $('#p-tempo-btn').setAttribute('aria-label', !has ? 'Set the tempo by tapping' : suggested ? 'Suggested tempo of ' + this.playingBpm() + ' BPM, tap to check it' : 'Tempo ' + this.playingBpm() + ' BPM, ' + timeSig(this.song.beatsPerBar));
     const video = this.usingVideo();
     $('#p-metro').setAttribute('aria-pressed', String(on && has && !video));
     $('#p-metro').classList.toggle('unavailable', !has || video);
-    $('#p-beat').hidden = !(on && has && !video);
     const note = $('#p-speed-note');
     note.hidden = pct === 100;
     note.textContent = 'Practising at ' + pct + '% of the real speed. Tap to reset.';
@@ -2102,7 +2198,7 @@ const player = {
       const idx = Math.floor((ts - ci.start) / ci.beatMs);
       if (idx < ci.beats) {
         // the count-in runs round the play button, one segment per beat
-        if (idx !== ci.shown) { ci.shown = idx; paintRing(Math.max(0, idx), ci.beats); }
+        if (idx !== ci.shown) { ci.shown = idx; paintRing(Math.max(0, idx), ci.beats, ci.beatMs, ci.bpb); }
       } else {
         this.countIn = null;
         paintRing(-1);
@@ -2173,21 +2269,22 @@ const player = {
     for (const [i, f] of next) if (this.lit.get(i) !== f) this.nodes[i].style.setProperty('--f', f);
     this.lit = next;
   },
-  /* Visual metronome: a row of soft dots, one per beat of the bar, for when the click is off.
-   * It counts from where playback started, the same grid the audible click uses. */
+  /* Visual metronome: a ring round the tempo button, one segment per beat of the bar.
+   * The segment for the current beat lights up (coral on the downbeat). It runs whether the
+   * click is on or muted, on the same grid the audible click uses. */
   paintDots() {
-    const box = $('#p-dots');
+    const ring = $('#p-beatring');
     const bpm = this.song.bpm;
-    const show = !!(bpm && this.playing && !this.countIn && !this.timing && !settings.metroOn && !this.usingVideo() && this.beatFrom != null);
-    if (!show) { if (!box.hidden) { box.hidden = true; this.dotBeat = -1; } return; }
+    const show = !!(bpm && this.playing && !this.countIn && !this.timing && !this.usingVideo() && this.beatFrom != null);
+    if (!show) { if (ring.classList.contains('live')) { ring.classList.remove('live'); this.dotBeat = -1; } return; }
     const bpb = this.song.beatsPerBar || 4;
-    if (box.childElementCount !== bpb) { box.innerHTML = ''; for (let i = 0; i < bpb; i++) box.appendChild(el('i', i === 0 ? 'down' : null)); this.dotBeat = -1; }
-    box.hidden = false;
-    const beat = Math.floor((this.t - this.beatFrom) / (60 / bpm) + 0.0001);
+    if (ring.childElementCount !== bpb) { ring.innerHTML = ringArcs(32, 32, 29, bpb, bpb > 6 ? 0.34 : 0.5); this.dotBeat = -1; }
+    ring.classList.add('live');
+    const beat = Math.floor((this.t - this.beatFrom) / (60 / (bpm * (this.song.speed || 1))) + 0.0001);
     if (beat === this.dotBeat || beat < 0) return;
     this.dotBeat = beat;
     const on = beat % bpb;
-    [...box.children].forEach((d, i) => d.classList.toggle('on', i === on));
+    [...ring.children].forEach((d, i) => d.setAttribute('class', i === on ? (i === 0 ? 'on down' : 'on') : ''));
   },
   /* Instrumental and intro cards sit in the lyric column, between the lines they separate.
    * Each shows how long the gap is, bar by bar, and "Back in 4, 3, 2, 1" at the end. */
@@ -2430,23 +2527,49 @@ const player = {
   },
 };
 
-/* ---------------- count-in ring: one segment per beat, round the play button ---------------- */
-function paintRing(on, beats) {
-  const ring = $('#p-ring');
-  if (!ring) return;
-  if (on < 0) { ring.classList.remove('live'); return; }
-  if (ring.childElementCount !== beats) {
-    const cx = 46, cy = 46, r = 42, gap = beats > 6 ? 0.22 : 0.32;
-    const step = (Math.PI * 2) / beats;
-    let h = '';
-    for (let k = 0; k < beats; k++) {
-      const a0 = -Math.PI / 2 + k * step + gap / 2, a1 = a0 + step - gap;
-      h += '<path d="M' + (cx + r * Math.cos(a0)).toFixed(2) + ' ' + (cy + r * Math.sin(a0)).toFixed(2) + ' A' + r + ' ' + r + ' 0 0 1 ' + (cx + r * Math.cos(a1)).toFixed(2) + ' ' + (cy + r * Math.sin(a1)).toFixed(2) + '"/>';
-    }
-    ring.innerHTML = h;
+/* Arcs round a circle, one per beat, with a small gap between them. pathLength=1 lets CSS sweep each one. */
+function ringArcs(cx, cy, r, beats, gap) {
+  const step = (Math.PI * 2) / beats;
+  let h = '';
+  for (let k = 0; k < beats; k++) {
+    const a0 = -Math.PI / 2 + k * step + gap / 2, a1 = a0 + step - gap;
+    h += '<path pathLength="1" d="M' + (cx + r * Math.cos(a0)).toFixed(2) + ' ' + (cy + r * Math.sin(a0)).toFixed(2) + ' A' + r + ' ' + r + ' 0 0 1 ' + (cx + r * Math.cos(a1)).toFixed(2) + ' ' + (cy + r * Math.sin(a1)).toFixed(2) + '"/>';
   }
+  return h;
+}
+
+/* ---------------- count-in: round the play button ----------------
+ * Each beat's segment sweeps full over the length of the beat, a ripple leaves the button,
+ * and the beat number pops up in the middle. When the count ends the ring lets go outwards. */
+function paintRing(on, beats, beatMs, bpb) {
+  const ring = $('#p-ring');
+  const wrap = $('#p-playwrap');
+  const num = $('#p-cinum');
+  if (!ring) return;
+  if (on < 0) {
+    if (ring.classList.contains('live')) {
+      ring.classList.add('go');
+      setTimeout(() => ring.classList.remove('live', 'go'), 420);
+    }
+    wrap.classList.remove('counting');
+    num.textContent = '';
+    return;
+  }
+  if (+ring.dataset.beats !== beats || !ring.querySelector('.seg')) {
+    const gap = beats > 6 ? 0.2 : 0.3;
+    const arcs = ringArcs(46, 46, 42, beats, gap);
+    ring.innerHTML = '<g class="track">' + arcs + '</g><g class="seg">' + arcs + '</g>';
+    ring.dataset.beats = beats;
+  }
+  ring.classList.remove('go');
   ring.classList.add('live');
-  [...ring.children].forEach((p, k) => p.setAttribute('class', k < on ? 'done' : k === on ? 'on' : ''));
+  ring.style.setProperty('--beat', (beatMs || 600) + 'ms');
+  [...ring.querySelector('.seg').children].forEach((p, k) => p.setAttribute('class', k < on ? 'done' : k === on ? 'on' + (bpb && k % bpb === 0 ? ' down' : '') : ''));
+  wrap.classList.add('counting');
+  // musicians count within the bar (1 2 3 4); a plain seconds count-in counts down
+  num.textContent = String(bpb && bpb < 100 ? (on % bpb) + 1 : beats - on);
+  num.classList.toggle('down', !!(bpb && bpb < 100 && on % bpb === 0));
+  for (const n of [num, wrap]) { n.classList.remove('pop'); void n.offsetWidth; n.classList.add('pop'); }
 }
 
 /* ---------------- the progress cord: knots, clues, tap to jump, drag to scrub ---------------- */
