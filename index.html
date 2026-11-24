@@ -111,18 +111,25 @@
   <section id="view-practice" class="view tabbed" hidden>
     <header class="bar brand-bar"><h1 class="tab-title">Practice</h1></header>
     <div class="content">
-      <div class="deck-teaser">
-        <div class="deck-stack" aria-hidden="true"><i></i><i></i><i></i></div>
-        <div>
-          <div class="eyebrow">Coming soon</div>
-          <h2>Daily practice deck</h2>
-          <p class="muted small">Five songs picked for you each day. Swipe through them to build a practice habit.</p>
+      <section class="deck">
+        <div class="deck-head">
+          <div class="eyebrow">Today's practice</div>
+          <h2>Five songs, picked for you</h2>
+          <p class="deck-lede">Chosen from how you've rated your songs. Stanze keeps an ear on every rating and adapts as you go: a song that feels rustier comes back sooner, and one that's settling in gives its place to something that needs you more.</p>
+          <div class="deck-progress"><div class="deck-strip" id="deck-strip" aria-hidden="true"></div><span id="deck-count"></span></div>
         </div>
-      </div>
-      <section>
-        <div class="section-head"><h2>Worth revisiting</h2><span class="muted small" id="revisit-sub"></span></div>
-        <ul id="revisit-list" class="list"></ul>
-        <p id="revisit-empty" class="empty" hidden>Nothing is slipping right now. Ratings fade slowly on days you open Stanze, and songs appear here when they need a refresh.</p>
+        <ul id="deck-list" class="list deck-list"></ul>
+        <p id="deck-swipe-note" class="muted small deck-note" hidden>Start with any song. Not feeling one today? Swipe it away and it rests for a few days.</p>
+        <div id="deck-finished" class="deck-finished" hidden>
+          <h3>That's today's five</h3>
+          <p>Thanks for making time to practise. Tomorrow's songs will build on how these felt.</p>
+          <button class="btn primary" id="deck-more" type="button"><svg><use href="#i-practice"/></svg>Practise five more</button>
+        </div>
+        <p id="deck-empty" class="empty" hidden>Nothing to practise yet. Rate a few songs from their options menu and Stanze will start picking for you.</p>
+        <div id="deck-done-wrap" class="deck-done-wrap" hidden>
+          <div class="field-label">Done today</div>
+          <div id="deck-done" class="deck-done"></div>
+        </div>
       </section>
       <section>
         <div class="section-head"><h2>Your songs by comfort</h2></div>
