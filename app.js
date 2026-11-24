@@ -1246,6 +1246,45 @@ function playedAgo(s) {
   return w < 9 ? 'last played ' + w + ' weeks ago' : 'last played over 2 months ago';
 }
 
+/* The comfort rating as one linear scale: five joined segments filled up to where the song stands.
+ * Tap a segment to move it there, or leave it as it is. */
+function comfortScale(song) {
+  const wrap = el('div', 'end-rate');
+  const q = el('div', 'er-q');
+  q.append(el('span', null, 'How\'s it feeling now?'));
+  const now = el('b', 'er-now');
+  q.appendChild(now);
+  const scale = el('div', 'er-scale');
+  scale.setAttribute('role', 'radiogroup');
+  scale.setAttribute('aria-label', 'Comfort with this song');
+  const hint = el('div', 'er-hint');
+  const c = comfortOf(song);
+  const start = c ? c.level : -1;
+  const paint = (level, changed) => {
+    [...scale.children].forEach((b, i) => {
+      b.classList.toggle('on', i <= level);
+      b.classList.toggle('top', i === level);
+      b.setAttribute('aria-checked', String(i === level));
+    });
+    now.textContent = level >= 0 ? LEVELS[level].label : 'Not rated';
+    hint.textContent = changed ? (level === start ? 'Kept as ' + LEVELS[level].label.toLowerCase() + '.' : 'Updated. ' + LEVELS[level].hint + '.')
+      : level >= 0 ? 'Tap to move it, or leave it as it is.' : 'Tap where it\'s at.';
+  };
+  LEVELS.forEach((lvl, i) => {
+    const b = el('button', 'er-seg');
+    b.type = 'button';
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-label', lvl.label + ': ' + lvl.hint);
+    b.onclick = () => { rateSong(song, i); paint(i, true); };
+    scale.appendChild(b);
+  });
+  const ends = el('div', 'er-ends');
+  ends.append(el('span', null, LEVELS[0].label), el('span', null, LEVELS[LEVELS.length - 1].label));
+  wrap.append(q, scale, ends, hint);
+  paint(start, false);
+  return wrap;
+}
+
 function levelPicker(current, onPick) {
   const box = el('div', 'levels');
   LEVELS.forEach((lvl, i) => {
@@ -1990,6 +2029,10 @@ const player = {
     this.raf = requestAnimationFrame((ts) => this.frame(ts));
     song.lastPlayed = Date.now();
     saveSongs();
+    if (this.autoStart) {
+      this.autoStart = false;
+      setTimeout(() => { if (this.song === song && !this.playing) this.play(); }, 450);
+    }
   },
   leave() {
     if (!this.song) return;
@@ -2106,16 +2149,19 @@ const player = {
     const i = f.songIds.indexOf(this.song.id);
     return i >= 0 ? getSong(f.songIds[i + 1]) || null : null;
   },
-  goNext() {
+  goNext(start) {
+    this.stopEndTimer();
     const n = this.nextSong();
-    if (n) location.hash = '#/play/' + n.id + '/' + this.folderId;
+    if (!n) return;
+    this.autoStart = !!start; // from the end card, the next song starts playing (with its count-in)
+    location.hash = '#/play/' + n.id + '/' + this.folderId;
   },
   back() { location.hash = this.folderId ? '#/folder/' + this.folderId : '#/'; },
 
   useTimeline(tl) {
     this.tl = tl;
     const box = $('#p-lyrics');
-    this.endCard = null;
+    this.clearEnd();
     box.innerHTML = '';
     box.classList.toggle('no-chords', !settings.showChords);
     this.nodes = tl.lines.map((l, i) => box.appendChild(lineNode(l, i)));
@@ -2313,11 +2359,14 @@ const player = {
     this.endSheet();
   },
   /* ----- onward journeys: the end-of-song card -----
-   * When a song ends a card unspools under the last line, in the lyric column, instead of a sheet over
-   * the words. From a folder it offers the next song (it waits for a tap); otherwise a song you're
-   * learning that you haven't played for a while. Play again is always there, and the comfort rating
-   * is an optional row you can skip. */
+   * When a song ends a card unspools under the last line, in the lyric column. It gives you a quiet
+   * well done, then the way on: from a folder the next song, which starts by itself once a bar has
+   * filled for 10 seconds (tap it to go now, or stay here); outside a folder a song you're learning
+   * that you haven't played for a while. Play again is always there, and the comfort scale shows
+   * where the song stands, to nudge up or down or leave as it is. */
   endCard: null,
+  endTimer: 0,
+  autoStart: false,
   endSheet() {
     this.clearEnd();
     const song = this.song;
@@ -2329,65 +2378,95 @@ const player = {
     const ids = f ? f.songIds.filter((id) => getSong(id)) : [];
     const pos = f ? ids.indexOf(song.id) : -1;
     const next = this.nextSong();
-    const big = (kicker, title, sub, icon, run, cls) => {
-      const b = el('button', 'end-go' + (cls ? ' ' + cls : ''));
+    const title = song.title || 'this one';
+    const words = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+    const say = (n) => words[n] || String(n);
+    let head = 'Nicely played', sub = 'That\'s ' + title + ', start to finish.';
+    if (f && next) {
+      const left = ids.length - pos - 1;
+      sub = 'That\'s ' + title + ', start to finish. ' + (pos === 0 ? 'One down, ' : say(pos + 1).replace(/^./, (c) => c.toUpperCase()) + ' down, ') + say(left) + ' to go.';
+    } else if (f) {
+      head = 'That\'s the set';
+      sub = ids.length > 1 ? 'All ' + say(ids.length) + ' songs in ' + f.name + ', start to finish. Well played.' : 'Start to finish. Well played.';
+    }
+    const hd = el('div', 'end-head');
+    hd.append(el('h2', null, head), el('p', null, sub));
+    card.appendChild(hd);
+
+    // a song tile, like the ones in your lists, as the way on
+    const tile = (kicker, s, meta, icon, run) => {
+      const b = el('button', 'end-tile');
       b.type = 'button';
-      const txt = el('span', 'eg-text');
-      txt.append(el('small', null, kicker), el('b', null, title));
-      if (sub) txt.appendChild(el('span', 'eg-sub', sub));
-      const ic = el('span', 'eg-ic');
-      ic.appendChild(svgIcon(icon));
-      b.append(txt, ic);
+      const fills = el('span', 'et-fill');
+      fills.setAttribute('aria-hidden', 'true');
+      fills.append(el('i', 'et-soft'), el('i', 'et-solid'));
+      const m = el('span', 'et-meta');
+      m.append(el('small', null, kicker), el('b', null, s.title || 'Untitled'), el('span', 'et-sub', meta));
+      const go = el('span', 'et-go');
+      go.appendChild(svgIcon(icon));
+      b.append(fills, coverNode(s), m, go);
       b.onclick = run;
       return b;
     };
-    let heading = 'That\'s the song';
-    let go = null;
     if (f && next) {
-      heading = 'Song ' + (pos + 1) + ' of ' + ids.length + ' done';
-      go = big('Up next', next.title || 'Untitled', [next.artist, (ids.indexOf(next.id) + 1) + ' of ' + ids.length].filter(Boolean).join(' · '), 'next', () => this.goNext());
+      const t = tile('Up next', next, [next.artist, (ids.indexOf(next.id) + 1) + ' of ' + ids.length].filter(Boolean).join(' · '), 'next', () => this.goNext(true));
+      card.appendChild(t);
+      // starts by itself after 10 seconds; the bar fills while you wait
+      const row = el('div', 'end-auto');
+      const note = el('span', 'ea-note', 'Starts in 10');
+      const stay = el('button', 'ea-stay', 'Stay here');
+      stay.type = 'button';
+      row.append(note, stay);
+      card.appendChild(row);
+      const SECS = 10;
+      const t0 = performance.now();
+      requestAnimationFrame(() => requestAnimationFrame(() => t.classList.add('counting')));
+      t.style.setProperty('--secs', SECS + 's');
+      const tick = () => {
+        const left = Math.ceil(SECS - (performance.now() - t0) / 1000);
+        if (left <= 0) { this.endTimer = 0; this.goNext(true); return; }
+        note.textContent = 'Starts in ' + left;
+        this.endTimer = setTimeout(tick, 200);
+      };
+      this.endTimer = setTimeout(tick, 200);
+      stay.onclick = () => {
+        this.stopEndTimer();
+        t.classList.remove('counting');
+        t.classList.add('stopped');
+        row.remove();
+      };
     } else if (f) {
-      heading = 'That\'s the whole of ' + f.name;
-      go = big('All done', 'Back to ' + f.name, ids.length + (ids.length === 1 ? ' song' : ' songs'), 'folder', () => this.back(), 'quiet');
+      const b = el('button', 'btn end-back');
+      b.type = 'button';
+      b.append(svgIcon('folder'), document.createTextNode('Back to ' + f.name));
+      b.onclick = () => this.back();
+      card.appendChild(b);
     } else {
       const pick = pickBackUp(song.id);
       if (pick) {
         const c = comfortOf(pick);
-        go = big('Pick back up', pick.title || 'Untitled', [pick.artist, c.label, playedAgo(pick)].filter(Boolean).join(' · '), 'play', () => (location.hash = '#/play/' + pick.id));
+        card.appendChild(tile('While you\'re warmed up', pick, [pick.artist, c.label, playedAgo(pick)].filter(Boolean).join(' · '), 'play', () => { this.autoStart = false; location.hash = '#/play/' + pick.id; }));
       }
     }
-    card.appendChild(el('div', 'end-head', heading));
-    if (go) card.appendChild(go);
     const again = el('button', 'btn end-again');
     again.type = 'button';
     again.append(svgIcon('restart'), document.createTextNode('Play again'));
     again.onclick = () => { this.restart(); this.play(); };
     card.appendChild(again);
-    // the comfort rating: one tap saves it, and nothing waits on it
-    const rate = el('div', 'end-rate');
-    const c = comfortOf(song);
-    const q = el('div', 'er-q', 'How well do you know it now?');
-    const chips = el('div', 'er-chips');
-    chips.setAttribute('role', 'group');
-    chips.setAttribute('aria-label', 'How well do you know it now?');
-    const paint = (level) => [...chips.children].forEach((b, i) => { b.classList.toggle('on', i === level); b.setAttribute('aria-pressed', String(i === level)); });
-    LEVELS.forEach((lvl, i) => {
-      const b = el('button', 'er-chip', lvl.label);
-      b.type = 'button';
-      b.onclick = () => { rateSong(song, i); paint(i); q.textContent = 'Saved as ' + lvl.label.toLowerCase() + '. Tap another to change it.'; };
-      chips.appendChild(b);
-    });
-    rate.append(q, chips);
-    card.appendChild(rate);
+    card.appendChild(comfortScale(song));
     box.appendChild(card);
-    paint(c ? c.level : -1);
     this.endCard = card;
     this.manualUntil = 0;
     this.touching = false;
   },
+  stopEndTimer() {
+    if (this.endTimer) { clearTimeout(this.endTimer); this.endTimer = 0; }
+  },
   clearEnd() {
+    this.stopEndTimer();
     if (this.endCard) { this.endCard.remove(); this.endCard = null; }
   },
+
   frame(ts) {
     if (!this.song) return;
     const dt = Math.min(0.25, (ts - this.lastFrame) / 1000);
