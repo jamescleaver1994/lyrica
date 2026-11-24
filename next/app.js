@@ -265,6 +265,8 @@ function comfortOf(song) {
   return { level: c.level, label: lvl.label, rated: lvl.score, score, slip: lvl.score - score, idle };
 }
 function rateSong(song, level) {
+  const before = song.comfort && song.comfort.level != null ? song.comfort.level : null;
+  if (before != null && level < before) deckRequeue(song.id); // feeling rustier: it comes back into today's practice
   const c = song.comfort || { history: [] };
   c.level = level;
   c.ratedDay = meta.activeDay;
@@ -287,6 +289,88 @@ function revisitList() {
     .sort((a, b) => b.c.slip - a.c.slip || (a.s.comfort.practicedAt || 0) - (b.s.comfort.practicedAt || 0))
     .slice(0, REVISIT_LIMIT)
     .map(({ s }) => s);
+}
+
+/* ---------------- daily practice deck ----------------
+ * Five songs a day, picked from your ratings: slipping songs first, then the ones you're learning that
+ * have waited longest, then comfortable ones due a run, then ones on the list to start. Play them in
+ * any order; each one you finish leaves the list and the rest move up. Swipe one away and it rests for
+ * three days. Rate a song lower than before and it comes back into today's list. After five, the deck
+ * doesn't refill by itself, but you can ask for five more. */
+const DECK_SIZE = 5;
+const DECK_REST_DAYS = 3;
+const todayKey = () => new Date().toLocaleDateString('en-CA');
+let deck = store.get('lyrica.deck', null);
+function saveDeck() { store.set('lyrica.deck', deck); }
+function deckState() {
+  const today = todayKey();
+  if (!deck || deck.date !== today) {
+    const rest = (deck && deck.rest) || {};
+    for (const id of Object.keys(rest)) if (rest[id] < Date.now()) delete rest[id];
+    deck = { date: today, ids: [], done: [], round: 0, rest, celebrated: 0 };
+    deckFill();
+  }
+  deck.ids = deck.ids.filter((id) => getSong(id));
+  // top up to five (new songs added, or one swiped away), but never past the five you've finished
+  if (deck.ids.length + deck.done.length < DECK_SIZE * (deck.round + 1)) deckFill();
+  return deck;
+}
+/* Songs that could go in the deck, best first. */
+function deckCandidates() {
+  const d = deck;
+  const skip = new Set([...d.ids, ...d.done]);
+  const now = Date.now();
+  const rank = (s) => {
+    const c = comfortOf(s);
+    const last = (s.comfort && s.comfort.practicedAt) || s.lastPlayed || 0;
+    if (c && c.level > 0 && c.slip >= SLIP_THRESHOLD) return [0, -c.slip, last];
+    if (c && (c.level === 1 || c.level === 2)) return [1, 0, last];
+    if (c && c.level === 3) return [2, 0, last];
+    if (c && c.level === 0) return [3, 0, last];
+    if (!c) return [4, 0, last];
+    return [5, 0, last]; // mastered and not slipping: only if there's nothing else
+  };
+  return songs
+    .filter((s) => !skip.has(s.id) && !(d.rest[s.id] > now))
+    .map((s) => ({ s, r: rank(s) }))
+    .filter(({ r }) => r[0] < 5)
+    .sort((a, b) => a.r[0] - b.r[0] || a.r[1] - b.r[1] || a.r[2] - b.r[2])
+    .map(({ s }) => s);
+}
+function deckFill() {
+  const want = DECK_SIZE * (deck.round + 1) - deck.done.length - deck.ids.length;
+  if (want > 0) deck.ids.push(...deckCandidates().slice(0, want).map((s) => s.id));
+  saveDeck();
+}
+function deckDone(id) {
+  const d = deckState();
+  d.ids = d.ids.filter((x) => x !== id);
+  if (!d.done.includes(id)) d.done.push(id);
+  saveDeck();
+}
+function deckRest(id) {
+  const d = deckState();
+  d.ids = d.ids.filter((x) => x !== id);
+  d.rest[id] = Date.now() + DECK_REST_DAYS * 86400000;
+  deckFill(); // keep five on the go if there are songs to offer
+}
+function deckMore() {
+  const d = deckState();
+  d.round += 1;
+  deckFill();
+}
+function deckRequeue(id) {
+  const d = deckState();
+  if (d.ids.includes(id)) return;
+  d.ids.push(id);
+  saveDeck();
+  toast('Back in today\'s practice, since it\'s feeling rustier');
+}
+// how many of the current round of five are done
+function deckProgress() {
+  const d = deckState();
+  const goal = DECK_SIZE * (d.round + 1);
+  return { done: d.done.length, goal, left: d.ids.length, roundDone: d.done.length - DECK_SIZE * d.round };
 }
 
 /* ---------------- cover art (iTunes Search API, nothing hosted by us) ---------------- */
@@ -621,7 +705,7 @@ function route() {
   else if (name === 'practice') openPractice();
   else if (name === 'edit') openEditor(id);
   else if (name === 'settings') openSettings();
-  else if (name === 'play' && getSong(id)) player.open(getSong(id), extra && getFolder(extra) ? extra : null);
+  else if (name === 'play' && getSong(id)) player.open(getSong(id), extra && getFolder(extra) ? extra : null, extra === 'deck');
   else if (name === 'folder' && getFolder(id)) openFolder(id);
   else openLibrary();
 }
@@ -1197,14 +1281,21 @@ $('#folder-menu').onclick = () => {
 };
 
 /* ---------------- practice ---------------- */
+/* Why a song is in the deck, in a few words. */
+function deckReason(s, short) {
+  const c = comfortOf(s);
+  if (!c) return short ? 'Not rated yet' : 'not rated yet';
+  if (c.level > 0 && c.slip >= SLIP_THRESHOLD) return short ? c.label + ', slipping' : 'slipping a little';
+  if (c.level === 0) return short ? 'Ready to start' : 'ready to start';
+  if (short) {
+    const d = s.lastPlayed ? Math.floor((Date.now() - s.lastPlayed) / 86400000) : null;
+    return c.label + (d == null ? ', not played yet' : d >= 2 ? ', ' + (d < 14 ? d + ' days' : Math.floor(d / 7) + ' weeks') : '');
+  }
+  return c.label + ', ' + playedAgo(s);
+}
 function openPractice() {
   show('practice');
-  const list = revisitList();
-  const ul = $('#revisit-list');
-  ul.innerHTML = '';
-  list.forEach((s) => ul.appendChild(songTile(s)));
-  $('#revisit-empty').hidden = list.length > 0;
-  $('#revisit-sub').textContent = list.length ? (list.length === 1 ? '1 song' : list.length + ' songs') : '';
+  renderDeck();
   const counts = LEVELS.map(() => 0);
   let unrated = 0;
   for (const s of songs) { const c = comfortOf(s); if (c) counts[c.level]++; else unrated++; }
@@ -1222,6 +1313,98 @@ function openPractice() {
   };
   for (let k = LEVELS.length - 1; k >= 0; k--) row(LEVELS[k].label, counts[k]);
   row('Not rated', unrated);
+}
+function renderDeck() {
+  const d = deckState();
+  const pr = deckProgress();
+  const roundDone = Math.max(0, Math.min(pr.roundDone, DECK_SIZE));
+  $('#deck-count').textContent = roundDone + ' of ' + DECK_SIZE + ' done';
+  const strip = $('#deck-strip');
+  strip.innerHTML = '';
+  for (let i = 0; i < DECK_SIZE; i++) strip.appendChild(el('i', i < roundDone ? 'on' : ''));
+  const ul = $('#deck-list');
+  ul.innerHTML = '';
+  const list = d.ids.map(getSong).filter(Boolean);
+  list.forEach((s) => {
+    const li = songTile(s);
+    li.dataset.id = s.id;
+    li.querySelector('.a').textContent = s.artist || '';
+    const badge = li.querySelector('.badge');
+    if (badge) badge.remove();
+    const lab = li.querySelector('.comfort-label');
+    if (lab) lab.textContent = deckReason(s, true);
+    li.onclick = () => { if (!(li._noClick > Date.now())) location.hash = '#/play/' + s.id + '/deck'; };
+    ul.appendChild(li);
+  });
+  if (list.length) { threadList(ul, true); enableSwipeAway(ul); }
+  const fin = $('#deck-finished');
+  const empty = $('#deck-empty');
+  const allDone = !list.length && d.done.length > 0;
+  fin.hidden = !allDone;
+  empty.hidden = list.length > 0 || allDone;
+  $('#deck-swipe-note').hidden = !list.length;
+  const done = $('#deck-done');
+  done.innerHTML = '';
+  d.done.map(getSong).filter(Boolean).forEach((s) => {
+    const chip = el('button', 'done-chip');
+    chip.type = 'button';
+    chip.append(svgIcon('check'), document.createTextNode(s.title || 'Untitled'));
+    chip.onclick = () => (location.hash = '#/play/' + s.id);
+    done.appendChild(chip);
+  });
+  $('#deck-done-wrap').hidden = !d.done.length;
+}
+$('#deck-more').onclick = () => {
+  deckMore();
+  if (!deckState().ids.length) toast('That\'s every song that needs you for now');
+  renderDeck();
+};
+
+/* Swipe a row left or right to set it aside (for the practice deck: rest it for a few days). */
+function enableSwipeAway(ul) {
+  [...ul.querySelectorAll(':scope > li')].forEach((li) => {
+    let x0 = 0, y0 = 0, dx = 0, live = false, id = null;
+    li.addEventListener('pointerdown', (e) => {
+      if (e.button > 0 || e.target.closest('.icon-btn, .bead')) return;
+      x0 = e.clientX; y0 = e.clientY; dx = 0; live = false; id = e.pointerId;
+    });
+    li.addEventListener('pointermove', (e) => {
+      if (id !== e.pointerId) return;
+      const mx = e.clientX - x0, my = e.clientY - y0;
+      if (!live) {
+        if (Math.abs(mx) < 10) { if (Math.abs(my) > 10) id = null; return; }
+        if (Math.abs(my) > Math.abs(mx)) { id = null; return; }
+        live = true;
+        li.classList.add('swiping');
+        try { li.setPointerCapture(e.pointerId); } catch { /* fine */ }
+      }
+      dx = mx;
+      li.style.transform = 'translateX(' + dx + 'px) rotate(' + dx / 60 + 'deg)';
+      li.style.opacity = String(Math.max(0.25, 1 - Math.abs(dx) / li.offsetWidth));
+    });
+    const end = (e) => {
+      if (id !== e.pointerId) return;
+      id = null;
+      if (!live) return;
+      li.classList.remove('swiping');
+      const gone = Math.abs(dx) > li.offsetWidth * 0.33;
+      li._noClick = Date.now() + 400; // the lift of a swipe isn't a tap
+      live = false;
+      if (!gone) { li.style.transform = ''; li.style.opacity = ''; return; }
+      li.classList.add('swiped');
+      li.style.transform = 'translateX(' + Math.sign(dx) * li.offsetWidth * 1.3 + 'px) rotate(' + Math.sign(dx) * 8 + 'deg)';
+      li.style.opacity = '0';
+      if (navigator.vibrate) { try { navigator.vibrate(10); } catch { /* fine */ } }
+      setTimeout(() => {
+        const t = li.dataset.title || li.querySelector('.t').textContent;
+        deckRest(li.dataset.id);
+        renderDeck();
+        toast(t + ' will rest for ' + DECK_REST_DAYS + ' days');
+      }, 260);
+    };
+    li.addEventListener('pointerup', end);
+    li.addEventListener('pointercancel', (e) => { if (id === e.pointerId) { id = null; li.classList.remove('swiping'); li.style.transform = ''; li.style.opacity = ''; } });
+  });
 }
 
 /* Song options: comfort level, folders, edit, delete */
@@ -2003,9 +2186,10 @@ const player = {
   gapHold: null, // paused at an instrumental, waiting to come back in
   lit: new Map(), // line index -> focus level currently painted
 
-  open(song, folderId) {
+  open(song, folderId, fromDeck) {
     this.song = song;
     this.folderId = folderId;
+    this.fromDeck = !!fromDeck;
     this.t = 0;
     this.maxT = 0;
     this.playing = false;
@@ -2144,6 +2328,7 @@ const player = {
     if (this.song && this.tl && this.maxT >= this.tl.end * 0.8) { markPracticed(this.song); this.maxT = 0; }
   },
   nextSong() {
+    if (this.fromDeck) { const d = deckState(); return getSong(d.ids.find((id) => id !== (this.song && this.song.id))) || null; }
     const f = this.folderId && getFolder(this.folderId);
     if (!f || !this.song) return null;
     const i = f.songIds.indexOf(this.song.id);
@@ -2151,12 +2336,13 @@ const player = {
   },
   goNext(start) {
     this.stopEndTimer();
+    if (this.endPreview && this.fromDeck && this.song) deckDone(this.song.id);
     const n = this.nextSong();
     if (!n) return;
     this.autoStart = !!start; // from the end card, the next song starts playing (with its count-in)
-    location.hash = '#/play/' + n.id + '/' + this.folderId;
+    location.hash = '#/play/' + n.id + '/' + (this.fromDeck ? 'deck' : this.folderId);
   },
-  back() { location.hash = this.folderId ? '#/folder/' + this.folderId : '#/'; },
+  back() { location.hash = this.fromDeck ? '#/practice' : this.folderId ? '#/folder/' + this.folderId : '#/'; },
 
   useTimeline(tl) {
     this.tl = tl;
@@ -2172,6 +2358,10 @@ const player = {
     this.hasChords = tl.lines.some((l) => l.hasChords);
     this.buildGapCards();
     box.scrollTop = 0;
+    // a long musical outro after the last sung line: the end card can come in softly while it plays
+    const sung = tl.lines.filter((l) => l.kind === 'lyric' && l.hasWords && l.time != null);
+    const lastSung = sung.length ? sung[sung.length - 1].time : null;
+    this.outroAt = lastSung != null && tl.end - lastSung > 12 ? lastSung + 5 : null;
   },
   /* The song starts at the top of the screen (no empty space above it). Padding below lets the last line reach the anchor. */
   layout() {
@@ -2356,6 +2546,8 @@ const player = {
     this.pause();
     this.maxT = this.tl.end;
     this.creditPractice();
+    if (this.endCard && this.endPreview) { this.endFinal(); return; }
+    if (this.fromDeck) deckDone(this.song.id);
     this.endSheet();
   },
   /* ----- onward journeys: the end-of-song card -----
@@ -2367,8 +2559,11 @@ const player = {
   endCard: null,
   endTimer: 0,
   autoStart: false,
-  endSheet() {
+  endPreview: false,
+  endFinal: null,
+  endSheet(preview) {
     this.clearEnd();
+    this.endPreview = !!preview;
     const song = this.song;
     const box = $('#p-lyrics');
     if (!song || !box) return;
@@ -2382,7 +2577,19 @@ const player = {
     const words = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
     const say = (n) => words[n] || String(n);
     let head = 'Nicely played', sub = 'That\'s ' + title + ', start to finish.';
-    if (f && next) {
+    let deckDoneAll = false;
+    if (this.fromDeck) {
+      const pr = deckProgress();
+      const here = preview && deckState().ids.includes(song.id) ? 1 : 0; // still playing out: count it as done
+      const n = Math.min(pr.roundDone + here, DECK_SIZE);
+      if (next) sub = 'That\'s ' + title + ', start to finish. ' + say(n).replace(/^./, (c) => c.toUpperCase()) + ' of today\'s ' + say(DECK_SIZE) + ' done.';
+      else {
+        deckDoneAll = true;
+        head = 'That\'s today\'s practice';
+        sub = 'Thanks for making the time. Every run makes the next one easier, and tomorrow\'s five will build on how these felt.';
+        if (!preview && pr.roundDone >= DECK_SIZE && deck.celebrated <= deck.round) { deck.celebrated = deck.round + 1; saveDeck(); toast('Five songs practised. Nicely done.'); }
+      }
+    } else if (f && next) {
       const left = ids.length - pos - 1;
       sub = 'That\'s ' + title + ', start to finish. ' + (pos === 0 ? 'One down, ' : say(pos + 1).replace(/^./, (c) => c.toUpperCase()) + ' down, ') + say(left) + ' to go.';
     } else if (f) {
@@ -2408,8 +2615,9 @@ const player = {
       b.onclick = run;
       return b;
     };
-    if (f && next) {
-      const t = tile('Up next', next, [next.artist, (ids.indexOf(next.id) + 1) + ' of ' + ids.length].filter(Boolean).join(' · '), 'next', () => this.goNext(true));
+    if (next) {
+      const meta = this.fromDeck ? [next.artist, deckReason(next)] : [next.artist, (ids.indexOf(next.id) + 1) + ' of ' + ids.length];
+      const t = tile('Up next', next, meta.filter(Boolean).join(' · '), 'next', () => this.goNext(true));
       card.appendChild(t);
       // starts by itself after 10 seconds; the bar fills while you wait
       const row = el('div', 'end-auto');
@@ -2419,22 +2627,37 @@ const player = {
       row.append(note, stay);
       card.appendChild(row);
       const SECS = 10;
-      const t0 = performance.now();
-      requestAnimationFrame(() => requestAnimationFrame(() => t.classList.add('counting')));
-      t.style.setProperty('--secs', SECS + 's');
-      const tick = () => {
-        const left = Math.ceil(SECS - (performance.now() - t0) / 1000);
-        if (left <= 0) { this.endTimer = 0; this.goNext(true); return; }
-        note.textContent = 'Starts in ' + left;
+      const startCount = () => {
+        row.hidden = false;
+        const t0 = performance.now();
+        requestAnimationFrame(() => requestAnimationFrame(() => t.classList.add('counting')));
+        t.style.setProperty('--secs', SECS + 's');
+        const tick = () => {
+          const left = Math.ceil(SECS - (performance.now() - t0) / 1000);
+          if (left <= 0) { this.endTimer = 0; this.goNext(true); return; }
+          note.textContent = 'Starts in ' + left;
+          this.endTimer = setTimeout(tick, 200);
+        };
         this.endTimer = setTimeout(tick, 200);
       };
-      this.endTimer = setTimeout(tick, 200);
+      // during an outro the card waits; the countdown only starts once the song has really ended
+      if (preview) { row.hidden = true; this.onEndFinal = startCount; } else startCount();
       stay.onclick = () => {
         this.stopEndTimer();
         t.classList.remove('counting');
         t.classList.add('stopped');
         row.remove();
       };
+    } else if (deckDoneAll) {
+      const more = el('button', 'btn primary end-back');
+      more.type = 'button';
+      more.append(svgIcon('practice'), document.createTextNode('Practise five more'));
+      more.onclick = () => { deckMore(); const n = getSong(deckState().ids[0]); if (n) { this.autoStart = true; location.hash = '#/play/' + n.id + '/deck'; } else { toast('That\'s everything for now'); this.back(); } };
+      const back = el('button', 'btn end-back');
+      back.type = 'button';
+      back.append(svgIcon('back'), document.createTextNode('Back to practice'));
+      back.onclick = () => this.back();
+      card.append(more, back);
     } else if (f) {
       const b = el('button', 'btn end-back');
       b.type = 'button';
@@ -2454,16 +2677,32 @@ const player = {
     again.onclick = () => { this.restart(); this.play(); };
     card.appendChild(again);
     card.appendChild(comfortScale(song));
+    if (preview) card.classList.add('outro');
     box.appendChild(card);
     this.endCard = card;
     this.manualUntil = 0;
     this.touching = false;
+  },
+  /* the outro has finished: the card that came in early becomes the real end of the song */
+  endFinal() {
+    this.endPreview = false;
+    if (this.fromDeck) deckDone(this.song.id);
+    const card = this.endCard;
+    if (!card) return;
+    card.classList.remove('outro');
+    const fn = this.onEndFinal;
+    this.onEndFinal = null;
+    if (fn && card.isConnected && card.querySelector('.end-tile')) fn();
+    // the last of today's five: celebrate now it's really done
+    if (this.fromDeck && !this.nextSong()) { const pr = deckProgress(); if (pr.roundDone >= DECK_SIZE && deck.celebrated <= deck.round) { deck.celebrated = deck.round + 1; saveDeck(); toast('Five songs practised. Nicely done.'); } }
   },
   stopEndTimer() {
     if (this.endTimer) { clearTimeout(this.endTimer); this.endTimer = 0; }
   },
   clearEnd() {
     this.stopEndTimer();
+    this.onEndFinal = null;
+    this.endPreview = false;
     if (this.endCard) { this.endCard.remove(); this.endCard = null; }
   },
 
@@ -2509,6 +2748,7 @@ const player = {
         upsertSong(this.song);
       }
       if (!this.timing && this.t >= this.tl.end) { this.t = this.tl.end; this.finished(); }
+      else if (!this.timing && !this.endCard && this.outroAt != null && this.t >= this.outroAt && this.t < this.endT() - 3) this.endSheet(true);
       else if (settings.pauseGaps && !this.timing) {
         const g = this.gaps.find((x) => !x.intro && this.t >= x.start && this.t < x.start + 1.5);
         if (g && g !== this.gapDone) { this.pause(); this.gapHold = g; this.gapDone = g; this.updateUi(); }
@@ -2738,7 +2978,7 @@ const player = {
       }
     }
     // once the song has ended, glide on to the end card
-    if (this.endCard && !this.playing) target = this.endCard.offsetTop - 28 + box.clientHeight * ANCHOR;
+    if (this.endCard) target = this.endCard.offsetTop - 28 + box.clientHeight * ANCHOR;
     target = Math.max(0, target - box.clientHeight * ANCHOR);
     const manual = this.touching || now < this.manualUntil;
     const away = Math.abs(target - box.scrollTop) > 60;
@@ -2750,7 +2990,7 @@ const player = {
     }
     if (manual) return;
     const diff = target - box.scrollTop;
-    if (Math.abs(diff) > 0.5) box.scrollTop += diff * Math.min(1, dt * 6);
+    if (Math.abs(diff) > 0.5) box.scrollTop += diff * Math.min(1, dt * (this.endCard ? 1.6 : 6)); // the end card glides in more slowly
   },
 
   /* ----- tap to time: build synced lyrics by tapping along ----- */

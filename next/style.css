@@ -1169,3 +1169,35 @@ ul.threaded > li.hint-nudge .bead { background: var(--accent); }
 .er-ends { display: flex; justify-content: space-between; font: 500 12px var(--font-body); color: var(--dim); margin-top: -6px; }
 .er-hint { font: 400 13px var(--font-body); color: var(--muted); min-height: 1.3em; }
 @media (prefers-reduced-motion: reduce) { .end-card { animation: none; } }
+
+/* ===== Daily practice deck ===== */
+.deck { display: flex; flex-direction: column; gap: 14px; }
+.deck-head {
+  padding: 22px 20px 20px; border-radius: 32px;
+  background: radial-gradient(120% 90% at 100% 0%, rgba(2, 128, 144, .22), transparent 60%), var(--surface-raised);
+}
+.deck-head .eyebrow { color: var(--chord); }
+.deck-head h2 { margin: 4px 0 8px; font: 800 26px/1.1 var(--font-display); letter-spacing: -0.03em; }
+.deck-lede { margin: 0 0 16px; font: 400 15px/1.45 var(--font-body); color: var(--ink-soft); }
+.deck-progress { display: flex; align-items: center; gap: 14px; font: 700 14px var(--font-display); color: var(--text); }
+.deck-strip { flex: 1; display: flex; gap: 4px; }
+.deck-strip i { flex: 1; height: 12px; background: var(--surface-strong); border-radius: 4px; transition: background-color .5s var(--unspool); }
+.deck-strip i:first-child { border-radius: 999px 4px 4px 999px; }
+.deck-strip i:last-child { border-radius: 4px 999px 999px 4px; }
+.deck-strip i.on { background: var(--cool); }
+.deck-list > li { touch-action: pan-y; transition: transform .35s var(--spring), opacity .35s ease; }
+.deck-list > li.swiping { transition: none; }
+.deck-list > li.swiped { transition: transform .26s ease-in, opacity .26s ease-in; }
+.deck-note { margin: -4px 6px 0; }
+.deck-finished { padding: 22px 20px; border-radius: 32px; background: var(--surface-raised); display: flex; flex-direction: column; gap: 8px; }
+.deck-finished h3 { margin: 0; font: 800 22px var(--font-display); letter-spacing: -0.02em; }
+.deck-finished p { margin: 0 0 8px; color: var(--ink-soft); font: 400 15px/1.45 var(--font-body); }
+.deck-finished .btn { min-height: 56px; gap: 10px; }
+.deck-done-wrap { display: flex; flex-direction: column; gap: 8px; padding: 4px 4px 0; }
+.deck-done { display: flex; flex-wrap: wrap; gap: 8px; }
+.done-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 14px 0 10px; border-radius: 999px; border: 0; cursor: pointer; background: var(--surface-strong); color: var(--ink-soft); font: 700 14px var(--font-display); }
+.done-chip svg { width: 18px; height: 18px; color: var(--chord); }
+/* during a long outro the card drifts in slowly and stays a little quiet until the song ends */
+.end-card.outro { animation-duration: 1.6s; opacity: .82; }
+.end-card { transition: opacity .8s var(--unspool); }
+.end-auto[hidden] { display: none; }
