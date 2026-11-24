@@ -4,7 +4,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.9.0';
 const LRCLIB = 'https://lrclib.net/api';
 const ITUNES = 'https://itunes.apple.com/search';
 const DEEZER = 'https://api.deezer.com';
@@ -96,6 +96,54 @@ function closeModal() {
 }
 $('#modal-close').onclick = closeModal;
 $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
+
+/* Swipe a sheet down to close it. The drag starts from the handle and title, or from anywhere in the
+ * sheet when its content is already scrolled to the top, so scrolling a long sheet still works.
+ * Let go past a third of the way (or with a quick flick) and it slides away; otherwise it springs back. */
+(function sheetSwipe() {
+  const card = $('#modal .modal-card');
+  const body = $('#modal-body');
+  let drag = null;
+  const skip = (t) => t.closest('input, textarea, select, [contenteditable], .no-swipe, input[type=range]');
+  card.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1 || skip(e.target)) { drag = null; return; }
+    const inBody = body.contains(e.target);
+    const scroller = inBody ? e.target.closest('.modal-body, [data-scroll]') : null;
+    if (inBody && scroller && scroller.scrollTop > 0) { drag = null; return; }
+    drag = { y: e.touches[0].clientY, x: e.touches[0].clientX, t: performance.now(), dy: 0, live: false, inBody };
+  }, { passive: true });
+  card.addEventListener('touchmove', (e) => {
+    if (!drag) return;
+    const dy = e.touches[0].clientY - drag.y, dx = e.touches[0].clientX - drag.x;
+    if (!drag.live) {
+      if (Math.abs(dy) < 8 && Math.abs(dx) < 8) return;
+      // only a mostly-downward pull becomes a swipe; anything else is left to scroll or tap
+      if (dy <= 0 || Math.abs(dx) > dy || (drag.inBody && body.scrollTop > 0)) { drag = null; return; }
+      drag.live = true;
+      drag.y = e.touches[0].clientY;
+      card.classList.add('swiping');
+    }
+    drag.dy = Math.max(0, e.touches[0].clientY - drag.y);
+    card.style.transform = 'translateY(' + drag.dy + 'px)';
+    if (e.cancelable) e.preventDefault();
+  }, { passive: false });
+  const end = () => {
+    if (!drag || !drag.live) { drag = null; return; }
+    const { dy, t } = drag;
+    drag = null;
+    const fast = dy > 40 && dy / Math.max(1, performance.now() - t) > 0.6;
+    card.classList.remove('swiping');
+    if (dy > card.offsetHeight / 3 || fast) {
+      card.classList.add('swiped');
+      card.style.transform = 'translateY(100%)';
+      setTimeout(() => { closeModal(); card.classList.remove('swiped'); card.style.transform = ''; }, 220);
+    } else {
+      card.style.transform = '';
+    }
+  };
+  card.addEventListener('touchend', end);
+  card.addEventListener('touchcancel', end);
+})();
 
 function askText(title, label, value, onOk) {
   const wrap = el('label', null, label);
@@ -217,6 +265,8 @@ function comfortOf(song) {
   return { level: c.level, label: lvl.label, rated: lvl.score, score, slip: lvl.score - score, idle };
 }
 function rateSong(song, level) {
+  const before = song.comfort && song.comfort.level != null ? song.comfort.level : null;
+  if (before != null && level < before) deckRequeue(song.id); // feeling rustier: it comes back into today's practice
   const c = song.comfort || { history: [] };
   c.level = level;
   c.ratedDay = meta.activeDay;
@@ -239,6 +289,88 @@ function revisitList() {
     .sort((a, b) => b.c.slip - a.c.slip || (a.s.comfort.practicedAt || 0) - (b.s.comfort.practicedAt || 0))
     .slice(0, REVISIT_LIMIT)
     .map(({ s }) => s);
+}
+
+/* ---------------- daily practice deck ----------------
+ * Five songs a day, picked from your ratings: slipping songs first, then the ones you're learning that
+ * have waited longest, then comfortable ones due a run, then ones on the list to start. Play them in
+ * any order; each one you finish leaves the list and the rest move up. Swipe one away and it rests for
+ * three days. Rate a song lower than before and it comes back into today's list. After five, the deck
+ * doesn't refill by itself, but you can ask for five more. */
+const DECK_SIZE = 5;
+const DECK_REST_DAYS = 3;
+const todayKey = () => new Date().toLocaleDateString('en-CA');
+let deck = store.get('lyrica.deck', null);
+function saveDeck() { store.set('lyrica.deck', deck); }
+function deckState() {
+  const today = todayKey();
+  if (!deck || deck.date !== today) {
+    const rest = (deck && deck.rest) || {};
+    for (const id of Object.keys(rest)) if (rest[id] < Date.now()) delete rest[id];
+    deck = { date: today, ids: [], done: [], round: 0, rest, celebrated: 0 };
+    deckFill();
+  }
+  deck.ids = deck.ids.filter((id) => getSong(id));
+  // top up to five (new songs added, or one swiped away), but never past the five you've finished
+  if (deck.ids.length + deck.done.length < DECK_SIZE * (deck.round + 1)) deckFill();
+  return deck;
+}
+/* Songs that could go in the deck, best first. */
+function deckCandidates() {
+  const d = deck;
+  const skip = new Set([...d.ids, ...d.done]);
+  const now = Date.now();
+  const rank = (s) => {
+    const c = comfortOf(s);
+    const last = (s.comfort && s.comfort.practicedAt) || s.lastPlayed || 0;
+    if (c && c.level > 0 && c.slip >= SLIP_THRESHOLD) return [0, -c.slip, last];
+    if (c && (c.level === 1 || c.level === 2)) return [1, 0, last];
+    if (c && c.level === 3) return [2, 0, last];
+    if (c && c.level === 0) return [3, 0, last];
+    if (!c) return [4, 0, last];
+    return [5, 0, last]; // mastered and not slipping: only if there's nothing else
+  };
+  return songs
+    .filter((s) => !skip.has(s.id) && !(d.rest[s.id] > now))
+    .map((s) => ({ s, r: rank(s) }))
+    .filter(({ r }) => r[0] < 5)
+    .sort((a, b) => a.r[0] - b.r[0] || a.r[1] - b.r[1] || a.r[2] - b.r[2])
+    .map(({ s }) => s);
+}
+function deckFill() {
+  const want = DECK_SIZE * (deck.round + 1) - deck.done.length - deck.ids.length;
+  if (want > 0) deck.ids.push(...deckCandidates().slice(0, want).map((s) => s.id));
+  saveDeck();
+}
+function deckDone(id) {
+  const d = deckState();
+  d.ids = d.ids.filter((x) => x !== id);
+  if (!d.done.includes(id)) d.done.push(id);
+  saveDeck();
+}
+function deckRest(id) {
+  const d = deckState();
+  d.ids = d.ids.filter((x) => x !== id);
+  d.rest[id] = Date.now() + DECK_REST_DAYS * 86400000;
+  deckFill(); // keep five on the go if there are songs to offer
+}
+function deckMore() {
+  const d = deckState();
+  d.round += 1;
+  deckFill();
+}
+function deckRequeue(id) {
+  const d = deckState();
+  if (d.ids.includes(id)) return;
+  d.ids.push(id);
+  saveDeck();
+  toast('Back in today\'s practice, since it\'s feeling rustier');
+}
+// how many of the current round of five are done
+function deckProgress() {
+  const d = deckState();
+  const goal = DECK_SIZE * (d.round + 1);
+  return { done: d.done.length, goal, left: d.ids.length, roundDone: d.done.length - DECK_SIZE * d.round };
 }
 
 /* ---------------- cover art (iTunes Search API, nothing hosted by us) ---------------- */
@@ -573,7 +705,7 @@ function route() {
   else if (name === 'practice') openPractice();
   else if (name === 'edit') openEditor(id);
   else if (name === 'settings') openSettings();
-  else if (name === 'play' && getSong(id)) player.open(getSong(id), extra && getFolder(extra) ? extra : null);
+  else if (name === 'play' && getSong(id)) player.open(getSong(id), extra && getFolder(extra) ? extra : null, extra === 'deck');
   else if (name === 'folder' && getFolder(id)) openFolder(id);
   else openLibrary();
 }
@@ -754,12 +886,20 @@ function cordSim(ul) {
 function enableCordReorder(ul, folder) {
   const rows = () => [...ul.querySelectorAll(':scope > li')];
   const beadOf = (li) => li.querySelector('.bead');
-  const renumber = () => rows().forEach((li, i) => {
+  // paints the numbers and the "up next" highlight for an order; while dragging this is the order
+  // the list will have if you let go now, so the highlight follows the songs instead of jumping at the end
+  const paint = (order) => order.forEach((li, i) => {
     const b = beadOf(li);
     b.textContent = String(i + 1);
     b.classList.toggle('first', i === 0);
-    b.setAttribute('aria-label', 'Move ' + (li.dataset.title || 'song') + ', number ' + (i + 1) + ' of ' + rows().length + '. Drag, or use the up and down arrow keys.');
+    li.classList.toggle('up-next', i === 0);
   });
+  const renumber = () => {
+    const all = rows();
+    paint(all);
+    all.forEach((li, i) => beadOf(li).setAttribute('aria-label', 'Move ' + (li.dataset.title || 'song') + ', number ' + (i + 1) + ' of ' + all.length + '. Drag, or use the up and down arrow keys.'));
+  };
+  const orderIf = (all, from, to) => { const o = all.slice(); o.splice(to, 0, o.splice(from, 1)[0]); return o; };
   const commit = () => {
     folder.songIds = rows().map((li) => li.dataset.id);
     saveFolders();
@@ -820,7 +960,7 @@ function enableCordReorder(ul, folder) {
         // even though the row can't be dragged past the ends of the list)
         for (let k = from + 1; k < all.length; k++) if (mid > tops[k] + hts[k] * 0.35) t = k;
         for (let k = from - 1; k >= 0; k--) if (mid < tops[k] + hts[k] * 0.65) t = k;
-        if (t !== to) { to = t; if (navigator.vibrate) { try { navigator.vibrate(6); } catch { /* fine */ } } }
+        if (t !== to) { to = t; paint(orderIf(all, from, to)); if (navigator.vibrate) { try { navigator.vibrate(6); } catch { /* fine */ } } }
         all.forEach((r, k) => {
           if (k === from) return;
           const shift = from < to && k > from && k <= to ? -(hts[from] + gap) : from > to && k < from && k >= to ? hts[from] + gap : 0;
@@ -852,6 +992,7 @@ function enableCordReorder(ul, folder) {
         cancelAnimationFrame(raf);
         sim.pinHeld = null;
         if (!moved) { li.click(); return; } // a tap on the bead plays from that song
+        paint(orderIf(all, from, to));
         // glide into the new slot, then put the rows in their new order without any jump
         const slot = to === from ? 0 : to > from ? tops[to] + hts[to] - tops[from] - hts[from] : tops[to] - tops[from];
         li.classList.remove('lifted');
@@ -1140,34 +1281,251 @@ $('#folder-menu').onclick = () => {
 };
 
 /* ---------------- practice ---------------- */
+/* Why a song is in the deck, in a few words. */
+function deckReason(s, short) {
+  const c = comfortOf(s);
+  if (!c) return short ? 'Not rated yet' : 'not rated yet';
+  if (c.level > 0 && c.slip >= SLIP_THRESHOLD) return short ? c.label + ', slipping' : 'slipping a little';
+  if (c.level === 0) return short ? 'Ready to start' : 'ready to start';
+  if (short) {
+    const d = s.lastPlayed ? Math.floor((Date.now() - s.lastPlayed) / 86400000) : null;
+    return c.label + (d == null ? ', not played yet' : d >= 2 ? ', ' + (d < 14 ? d + ' days' : Math.floor(d / 7) + ' weeks') : '');
+  }
+  return c.label + ', ' + playedAgo(s);
+}
 function openPractice() {
   show('practice');
-  const list = revisitList();
-  const ul = $('#revisit-list');
-  ul.innerHTML = '';
-  list.forEach((s) => ul.appendChild(songTile(s)));
-  $('#revisit-empty').hidden = list.length > 0;
-  $('#revisit-sub').textContent = list.length ? (list.length === 1 ? '1 song' : list.length + ' songs') : '';
-  const counts = LEVELS.map(() => 0);
-  let unrated = 0;
-  for (const s of songs) { const c = comfortOf(s); if (c) counts[c.level]++; else unrated++; }
-  const max = Math.max(1, ...counts, unrated);
+  renderDeck();
+  renderLibraryShape();
+}
+/* Your library by how well you know it: one strip split into shares of the whole library,
+ * then a row per stage with its covers stacked. Tap a stage to open its songs. */
+const STAGES = [
+  { key: 4, label: 'Mastered', hint: 'Could play it in my sleep', color: '#f45b69' },
+  { key: 3, label: 'Comfortable', hint: 'Play it with a glance', color: '#c4627f' },
+  { key: 2, label: 'Getting there', hint: 'Know the shape, a few gaps', color: '#8a6a9c' },
+  { key: 1, label: 'Learning', hint: 'Still reading most of it', color: '#4f74a0' },
+  { key: 0, label: 'Not started', hint: 'On the list to learn', color: '#028090' },
+  { key: -1, label: 'Not rated', hint: 'Rate it from its options menu', color: '#2b3f44' },
+];
+let openStage = null;
+function renderLibraryShape() {
   const box = $('#comfort-summary');
   box.innerHTML = '';
-  const row = (label, n) => {
-    const r = el('div', 'cs-row');
-    const bar = el('div', 'bar');
-    const i = el('i');
-    i.style.width = (n / max) * 100 + '%';
-    bar.appendChild(i);
-    r.append(el('span', null, label), bar, el('span', 'n', String(n)));
-    box.appendChild(r);
-  };
-  for (let k = LEVELS.length - 1; k >= 0; k--) row(LEVELS[k].label, counts[k]);
-  row('Not rated', unrated);
+  const groups = new Map(STAGES.map((st) => [st.key, []]));
+  for (const s of songs) { const c = comfortOf(s); groups.get(c ? c.level : -1).push(s); }
+  if (!songs.length) { box.appendChild(el('p', 'empty', 'Add a few songs and you\'ll see your library take shape here.')); return; }
+  // the strip: shares of the whole library, from not rated on the left to mastered on the right
+  const strip = el('div', 'ls-strip');
+  strip.setAttribute('role', 'group');
+  strip.setAttribute('aria-label', 'Your ' + songs.length + ' songs: ' + STAGES.filter((st) => groups.get(st.key).length).map((st) => groups.get(st.key).length + ' ' + st.label.toLowerCase()).join(', '));
+  const stripCard = el('div', 'ls-strip-card');
+  const bubble = el('div', 'ls-bubble');
+  bubble.hidden = true;
+  let bubbleTimer = 0;
+  STAGES.slice().reverse().forEach((st) => {
+    const n = groups.get(st.key).length;
+    if (!n) return;
+    // each piece is tappable: a little bubble says what it is
+    const seg = el('button', 'ls-seg');
+    seg.type = 'button';
+    seg.style.flexGrow = n;
+    seg.style.background = st.color;
+    const say = n + ' ' + st.label.toLowerCase();
+    seg.setAttribute('aria-label', say);
+    seg.onclick = () => {
+      bubble.textContent = say;
+      bubble.hidden = false;
+      const cr = stripCard.getBoundingClientRect(), r = seg.getBoundingClientRect();
+      bubble.style.left = clamp(r.left - cr.left + r.width / 2, 60, cr.width - 60) + 'px';
+      strip.querySelectorAll('.ls-seg').forEach((x) => x.classList.toggle('picked', x === seg));
+      clearTimeout(bubbleTimer);
+      bubbleTimer = setTimeout(() => { bubble.hidden = true; seg.classList.remove('picked'); }, 2600);
+    };
+    strip.appendChild(seg);
+  });
+  stripCard.append(bubble, strip, el('div', 'ls-strip-ends'));
+  stripCard.lastChild.append(el('span', null, songs.length + (songs.length === 1 ? ' song' : ' songs') + '. Tap the bar to see each part.'), el('span', null, 'Mastered'));
+  box.appendChild(stripCard);
+  // a row per stage, its covers stacked
+  for (const st of STAGES) {
+    const list = groups.get(st.key);
+    if (!list.length) continue;
+    const b = el('button', 'ls-stage' + (openStage === st.key ? ' open' : ''));
+    b.type = 'button';
+    b.setAttribute('aria-expanded', String(openStage === st.key));
+    const dot = el('span', 'ls-dot');
+    dot.style.background = st.color;
+    const txt = el('span', 'ls-text');
+    txt.append(el('b', null, st.label), el('small', null, st.hint));
+    const stack = el('span', 'ls-stack');
+    stack.setAttribute('aria-hidden', 'true');
+    list.slice(0, 4).forEach((s) => stack.appendChild(coverNode(s)));
+    const n = el('span', 'ls-n', String(list.length));
+    b.append(dot, txt, stack, n);
+    b.onclick = () => { openStage = openStage === st.key ? null : st.key; renderLibraryShape(); };
+    box.appendChild(b);
+    if (openStage === st.key) {
+      const ul = el('ul', 'list ls-songs');
+      list.slice().sort(byTitle).forEach((s) => ul.appendChild(songTile(s)));
+      box.appendChild(ul);
+    }
+  }
+}
+function renderDeck() {
+  const d = deckState();
+  const pr = deckProgress();
+  const roundDone = Math.max(0, Math.min(pr.roundDone, DECK_SIZE));
+  $('#deck-count').textContent = roundDone + ' of ' + DECK_SIZE + ' done';
+  const strip = $('#deck-strip');
+  strip.innerHTML = '';
+  for (let i = 0; i < DECK_SIZE; i++) strip.appendChild(el('i', i < roundDone ? 'on' : ''));
+  const ul = $('#deck-list');
+  ul.innerHTML = '';
+  const list = d.ids.map(getSong).filter(Boolean);
+  list.forEach((s) => {
+    const li = songTile(s);
+    li.dataset.id = s.id;
+    li.querySelector('.a').textContent = s.artist || '';
+    const badge = li.querySelector('.badge');
+    if (badge) badge.remove();
+    const lab = li.querySelector('.comfort-label');
+    if (lab) lab.textContent = deckReason(s, true);
+    li.onclick = () => { if (!(li._noClick > Date.now())) location.hash = '#/play/' + s.id + '/deck'; };
+    ul.appendChild(li);
+  });
+  if (list.length) { threadList(ul, true); enableSwipeAway(ul); }
+  const fin = $('#deck-finished');
+  const empty = $('#deck-empty');
+  const allDone = !list.length && d.done.length > 0;
+  fin.hidden = !allDone;
+  empty.hidden = list.length > 0 || allDone;
+  $('#deck-swipe-note').hidden = !list.length;
+  const done = $('#deck-done');
+  done.innerHTML = '';
+  d.done.map(getSong).filter(Boolean).forEach((s) => {
+    const chip = el('button', 'done-chip');
+    chip.type = 'button';
+    chip.append(svgIcon('check'), document.createTextNode(s.title || 'Untitled'));
+    chip.onclick = () => (location.hash = '#/play/' + s.id);
+    done.appendChild(chip);
+  });
+  $('#deck-done-wrap').hidden = !d.done.length;
+}
+$('#deck-more').onclick = () => {
+  deckMore();
+  if (!deckState().ids.length) toast('That\'s every song that needs you for now');
+  renderDeck();
+};
+
+/* Swipe a row left or right to set it aside (for the practice deck: rest it for a few days). */
+function enableSwipeAway(ul) {
+  [...ul.querySelectorAll(':scope > li')].forEach((li) => {
+    let x0 = 0, y0 = 0, dx = 0, live = false, id = null;
+    li.addEventListener('pointerdown', (e) => {
+      if (e.button > 0 || e.target.closest('.icon-btn, .bead')) return;
+      x0 = e.clientX; y0 = e.clientY; dx = 0; live = false; id = e.pointerId;
+    });
+    li.addEventListener('pointermove', (e) => {
+      if (id !== e.pointerId) return;
+      const mx = e.clientX - x0, my = e.clientY - y0;
+      if (!live) {
+        if (Math.abs(mx) < 10) { if (Math.abs(my) > 10) id = null; return; }
+        if (Math.abs(my) > Math.abs(mx)) { id = null; return; }
+        live = true;
+        li.classList.add('swiping');
+        try { li.setPointerCapture(e.pointerId); } catch { /* fine */ }
+      }
+      dx = mx;
+      li.style.transform = 'translateX(' + dx + 'px) rotate(' + dx / 60 + 'deg)';
+      li.style.opacity = String(Math.max(0.25, 1 - Math.abs(dx) / li.offsetWidth));
+    });
+    const end = (e) => {
+      if (id !== e.pointerId) return;
+      id = null;
+      if (!live) return;
+      li.classList.remove('swiping');
+      const gone = Math.abs(dx) > li.offsetWidth * 0.33;
+      li._noClick = Date.now() + 400; // the lift of a swipe isn't a tap
+      live = false;
+      if (!gone) { li.style.transform = ''; li.style.opacity = ''; return; }
+      li.classList.add('swiped');
+      li.style.transform = 'translateX(' + Math.sign(dx) * li.offsetWidth * 1.3 + 'px) rotate(' + Math.sign(dx) * 8 + 'deg)';
+      li.style.opacity = '0';
+      if (navigator.vibrate) { try { navigator.vibrate(10); } catch { /* fine */ } }
+      setTimeout(() => {
+        const t = li.dataset.title || li.querySelector('.t').textContent;
+        deckRest(li.dataset.id);
+        renderDeck();
+        toast(t + ' will rest for ' + DECK_REST_DAYS + ' days');
+      }, 260);
+    };
+    li.addEventListener('pointerup', end);
+    li.addEventListener('pointercancel', (e) => { if (id === e.pointerId) { id = null; li.classList.remove('swiping'); li.style.transform = ''; li.style.opacity = ''; } });
+  });
 }
 
 /* Song options: comfort level, folders, edit, delete */
+/* A song you've started learning (Learning or Getting there) that has gone longest without a play.
+ * Anything played in the last day doesn't count as "a while". */
+function pickBackUp(exceptId) {
+  const dayAgo = Date.now() - 86400000;
+  const cands = songs.filter((s) => {
+    if (s.id === exceptId) return false;
+    const c = comfortOf(s);
+    return c && (c.level === 1 || c.level === 2) && (s.lastPlayed || 0) < dayAgo;
+  });
+  cands.sort((a, b) => (a.lastPlayed || 0) - (b.lastPlayed || 0));
+  return cands[0] || null;
+}
+function playedAgo(s) {
+  if (!s.lastPlayed) return 'not played yet';
+  const d = Math.floor((Date.now() - s.lastPlayed) / 86400000);
+  if (d < 2) return 'played yesterday';
+  if (d < 14) return 'last played ' + d + ' days ago';
+  const w = Math.floor(d / 7);
+  return w < 9 ? 'last played ' + w + ' weeks ago' : 'last played over 2 months ago';
+}
+
+/* The comfort rating as one linear scale: five joined segments filled up to where the song stands.
+ * Tap a segment to move it there, or leave it as it is. */
+function comfortScale(song) {
+  const wrap = el('div', 'end-rate');
+  const q = el('div', 'er-q');
+  q.append(el('span', null, 'How\'s it feeling now?'));
+  const now = el('b', 'er-now');
+  q.appendChild(now);
+  const scale = el('div', 'er-scale');
+  scale.setAttribute('role', 'radiogroup');
+  scale.setAttribute('aria-label', 'Comfort with this song');
+  const hint = el('div', 'er-hint');
+  const c = comfortOf(song);
+  const start = c ? c.level : -1;
+  const paint = (level, changed) => {
+    [...scale.children].forEach((b, i) => {
+      b.classList.toggle('on', i <= level);
+      b.classList.toggle('top', i === level);
+      b.setAttribute('aria-checked', String(i === level));
+    });
+    now.textContent = level >= 0 ? LEVELS[level].label : 'Not rated';
+    hint.textContent = changed ? (level === start ? 'Kept as ' + LEVELS[level].label.toLowerCase() + '.' : 'Updated. ' + LEVELS[level].hint + '.')
+      : level >= 0 ? 'Tap to move it, or leave it as it is.' : 'Tap where it\'s at.';
+  };
+  LEVELS.forEach((lvl, i) => {
+    const b = el('button', 'er-seg');
+    b.type = 'button';
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-label', lvl.label + ': ' + lvl.hint);
+    b.onclick = () => { rateSong(song, i); paint(i, true); };
+    scale.appendChild(b);
+  });
+  const ends = el('div', 'er-ends');
+  ends.append(el('span', null, LEVELS[0].label), el('span', null, LEVELS[LEVELS.length - 1].label));
+  wrap.append(q, scale, ends, hint);
+  paint(start, false);
+  return wrap;
+}
+
 function levelPicker(current, onPick) {
   const box = el('div', 'levels');
   LEVELS.forEach((lvl, i) => {
@@ -1328,8 +1686,18 @@ function rerender() {
 }
 
 /* ---------------- search (LRCLIB) ---------------- */
+let searchRun = 0; // bumped when a search starts or is cleared, so a slow answer can't refill a cleared screen
+/* Once a song is added, Find starts fresh next time instead of showing the old search. */
+function clearSearch() {
+  searchRun++;
+  $('#search-track').value = '';
+  $('#search-artist').value = '';
+  $('#search-status').textContent = '';
+  $('#search-results').innerHTML = '';
+}
 $('#search-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+  const run = ++searchRun;
   const track = $('#search-track').value.trim();
   const artist = $('#search-artist').value.trim();
   if (!track) return;
@@ -1345,6 +1713,7 @@ $('#search-form').addEventListener('submit', async (e) => {
     const res = await fetch(LRCLIB + '/search?' + params);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     let results = await res.json();
+    if (run !== searchRun) return;
     results = results.filter((r) => r.syncedLyrics || r.plainLyrics);
     results.sort((a, b) => (b.syncedLyrics ? 1 : 0) - (a.syncedLyrics ? 1 : 0));
     status.textContent = results.length ? results.length + ' found. Tap one to preview.' : 'Nothing found. Try fewer words, or paste the lyrics yourself.';
@@ -1371,6 +1740,7 @@ $('#search-form').addEventListener('submit', async (e) => {
     });
     list.classList.add('strung');
   } catch (err) {
+    if (run !== searchRun) return;
     status.textContent = navigator.onLine === false
       ? 'You are offline. Search needs internet, but your saved songs still work.'
       : 'Search failed (' + err.message + '). Try again in a moment.';
@@ -1395,6 +1765,7 @@ function saveResult(r) {
     queueEnrich(song);
     toast('Saved to your songs');
   }
+  clearSearch();
   location.hash = '#/play/' + song.id;
 }
 
@@ -1873,9 +2244,10 @@ const player = {
   gapHold: null, // paused at an instrumental, waiting to come back in
   lit: new Map(), // line index -> focus level currently painted
 
-  open(song, folderId) {
+  open(song, folderId, fromDeck) {
     this.song = song;
     this.folderId = folderId;
+    this.fromDeck = !!fromDeck;
     this.t = 0;
     this.maxT = 0;
     this.playing = false;
@@ -1899,9 +2271,14 @@ const player = {
     this.raf = requestAnimationFrame((ts) => this.frame(ts));
     song.lastPlayed = Date.now();
     saveSongs();
+    if (this.autoStart) {
+      this.autoStart = false;
+      setTimeout(() => { if (this.song === song && !this.playing) this.play(); }, 450);
+    }
   },
   leave() {
     if (!this.song) return;
+    this.clearEnd();
     this.creditPractice();
     this.pause();
     this.stopTiming(true);
@@ -2009,20 +2386,26 @@ const player = {
     if (this.song && this.tl && this.maxT >= this.tl.end * 0.8) { markPracticed(this.song); this.maxT = 0; }
   },
   nextSong() {
+    if (this.fromDeck) { const d = deckState(); return getSong(d.ids.find((id) => id !== (this.song && this.song.id))) || null; }
     const f = this.folderId && getFolder(this.folderId);
     if (!f || !this.song) return null;
     const i = f.songIds.indexOf(this.song.id);
     return i >= 0 ? getSong(f.songIds[i + 1]) || null : null;
   },
-  goNext() {
+  goNext(start) {
+    this.stopEndTimer();
+    if (this.endPreview && this.fromDeck && this.song) deckDone(this.song.id);
     const n = this.nextSong();
-    if (n) location.hash = '#/play/' + n.id + '/' + this.folderId;
+    if (!n) return;
+    this.autoStart = !!start; // from the end card, the next song starts playing (with its count-in)
+    location.hash = '#/play/' + n.id + '/' + (this.fromDeck ? 'deck' : this.folderId);
   },
-  back() { location.hash = this.folderId ? '#/folder/' + this.folderId : '#/'; },
+  back() { location.hash = this.fromDeck ? '#/practice' : this.folderId ? '#/folder/' + this.folderId : '#/'; },
 
   useTimeline(tl) {
     this.tl = tl;
     const box = $('#p-lyrics');
+    this.clearEnd();
     box.innerHTML = '';
     box.classList.toggle('no-chords', !settings.showChords);
     this.nodes = tl.lines.map((l, i) => box.appendChild(lineNode(l, i)));
@@ -2033,6 +2416,10 @@ const player = {
     this.hasChords = tl.lines.some((l) => l.hasChords);
     this.buildGapCards();
     box.scrollTop = 0;
+    // a long musical outro after the last sung line: the end card can come in softly while it plays
+    const sung = tl.lines.filter((l) => l.kind === 'lyric' && l.hasWords && l.time != null);
+    const lastSung = sung.length ? sung[sung.length - 1].time : null;
+    this.outroAt = lastSung != null && tl.end - lastSung > 12 ? lastSung + 5 : null;
   },
   /* The song starts at the top of the screen (no empty space above it). Padding below lets the last line reach the anchor. */
   layout() {
@@ -2074,6 +2461,7 @@ const player = {
       return;
     }
     if (this.t >= this.tl.end - 0.1) { this.t = 0; this.maxT = 0; }
+    this.clearEnd();
     this.playing = true;
     this.manualUntil = 0;
     const hold = this.gapHold;
@@ -2102,6 +2490,7 @@ const player = {
   },
   toggle() { this.playing ? this.pause() : this.play(); },
   restart() {
+    this.clearEnd();
     this.gapHold = null;
     this.t = 0;
     this.maxT = 0;
@@ -2115,6 +2504,7 @@ const player = {
   seekToLine(i) {
     const l = this.tl.lines[i];
     if (!l || l.time == null || this.timing) return;
+    this.clearEnd();
     this.t = l.time;
     this.manualUntil = 0;
     this.gapHold = null;
@@ -2214,19 +2604,166 @@ const player = {
     this.pause();
     this.maxT = this.tl.end;
     this.creditPractice();
+    if (this.endCard && this.endPreview) { this.endFinal(); return; }
+    if (this.fromDeck) deckDone(this.song.id);
     this.endSheet();
   },
-  endSheet() {
+  /* ----- onward journeys: the end-of-song card -----
+   * When a song ends a card unspools under the last line, in the lyric column. It gives you a quiet
+   * well done, then the way on: from a folder the next song, which starts by itself once a bar has
+   * filled for 10 seconds (tap it to go now, or stay here); outside a folder a song you're learning
+   * that you haven't played for a while. Play again is always there, and the comfort scale shows
+   * where the song stands, to nudge up or down or leave as it is. */
+  endCard: null,
+  endTimer: 0,
+  autoStart: false,
+  endPreview: false,
+  endFinal: null,
+  endSheet(preview) {
+    this.clearEnd();
+    this.endPreview = !!preview;
     const song = this.song;
-    const c = comfortOf(song);
-    const body = el('div', 'stack');
-    body.appendChild(el('div', 'muted', 'How well do you know it now? This helps Stanze suggest what to revisit.'));
-    body.appendChild(levelPicker(c ? c.level : null, (i) => { rateSong(song, i); closeModal(); toast('Marked as ' + LEVELS[i].label.toLowerCase()); }));
+    const box = $('#p-lyrics');
+    if (!song || !box) return;
+    const card = el('section', 'end-card');
+    card.setAttribute('aria-label', 'End of song');
+    const f = this.folderId && getFolder(this.folderId);
+    const ids = f ? f.songIds.filter((id) => getSong(id)) : [];
+    const pos = f ? ids.indexOf(song.id) : -1;
     const next = this.nextSong();
-    const actions = [{ label: 'Play again', run: () => this.restart() }];
-    if (next) actions.push({ label: 'Next: ' + next.title, primary: true, run: () => this.goNext() });
-    openModal('Nice one', body, actions);
+    const title = song.title || 'this one';
+    const words = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+    const say = (n) => words[n] || String(n);
+    let head = 'Nicely played', sub = 'That\'s ' + title + ', start to finish.';
+    let deckDoneAll = false;
+    if (this.fromDeck) {
+      const pr = deckProgress();
+      const here = preview && deckState().ids.includes(song.id) ? 1 : 0; // still playing out: count it as done
+      const n = Math.min(pr.roundDone + here, DECK_SIZE);
+      if (next) sub = 'That\'s ' + title + ', start to finish. ' + say(n).replace(/^./, (c) => c.toUpperCase()) + ' of today\'s ' + say(DECK_SIZE) + ' done.';
+      else {
+        deckDoneAll = true;
+        head = 'That\'s today\'s practice';
+        sub = 'Thanks for making the time. Every run makes the next one easier, and tomorrow\'s five will build on how these felt.';
+        if (!preview && pr.roundDone >= DECK_SIZE && deck.celebrated <= deck.round) { deck.celebrated = deck.round + 1; saveDeck(); toast('Five songs practised. Nicely done.'); }
+      }
+    } else if (f && next) {
+      const left = ids.length - pos - 1;
+      sub = 'That\'s ' + title + ', start to finish. ' + (pos === 0 ? 'One down, ' : say(pos + 1).replace(/^./, (c) => c.toUpperCase()) + ' down, ') + say(left) + ' to go.';
+    } else if (f) {
+      head = 'That\'s the set';
+      sub = ids.length > 1 ? 'All ' + say(ids.length) + ' songs in ' + f.name + ', start to finish. Well played.' : 'Start to finish. Well played.';
+    }
+    const hd = el('div', 'end-head');
+    hd.append(el('h2', null, head), el('p', null, sub));
+    card.appendChild(hd);
+
+    // a song tile, like the ones in your lists, as the way on
+    const tile = (kicker, s, meta, icon, run) => {
+      const b = el('button', 'end-tile');
+      b.type = 'button';
+      const fills = el('span', 'et-fill');
+      fills.setAttribute('aria-hidden', 'true');
+      fills.append(el('i', 'et-soft'), el('i', 'et-solid'));
+      const m = el('span', 'et-meta');
+      m.append(el('small', null, kicker), el('b', null, s.title || 'Untitled'), el('span', 'et-sub', meta));
+      const go = el('span', 'et-go');
+      go.appendChild(svgIcon(icon));
+      b.append(fills, coverNode(s), m, go);
+      b.onclick = run;
+      return b;
+    };
+    if (next) {
+      const meta = this.fromDeck ? [next.artist, deckReason(next)] : [next.artist, (ids.indexOf(next.id) + 1) + ' of ' + ids.length];
+      const t = tile('Up next', next, meta.filter(Boolean).join(' · '), 'next', () => this.goNext(true));
+      card.appendChild(t);
+      // starts by itself after 10 seconds; the bar fills while you wait
+      const row = el('div', 'end-auto');
+      const note = el('span', 'ea-note', 'Starts in 10');
+      const stay = el('button', 'ea-stay', 'Stay here');
+      stay.type = 'button';
+      row.append(note, stay);
+      card.appendChild(row);
+      const SECS = 10;
+      const startCount = () => {
+        row.hidden = false;
+        const t0 = performance.now();
+        requestAnimationFrame(() => requestAnimationFrame(() => t.classList.add('counting')));
+        t.style.setProperty('--secs', SECS + 's');
+        const tick = () => {
+          const left = Math.ceil(SECS - (performance.now() - t0) / 1000);
+          if (left <= 0) { this.endTimer = 0; this.goNext(true); return; }
+          note.textContent = 'Starts in ' + left;
+          this.endTimer = setTimeout(tick, 200);
+        };
+        this.endTimer = setTimeout(tick, 200);
+      };
+      // during an outro the card waits; the countdown only starts once the song has really ended
+      if (preview) { row.hidden = true; this.onEndFinal = startCount; } else startCount();
+      stay.onclick = () => {
+        this.stopEndTimer();
+        t.classList.remove('counting');
+        t.classList.add('stopped');
+        row.remove();
+      };
+    } else if (deckDoneAll) {
+      const more = el('button', 'btn primary end-back');
+      more.type = 'button';
+      more.append(svgIcon('practice'), document.createTextNode('Practise five more'));
+      more.onclick = () => { deckMore(); const n = getSong(deckState().ids[0]); if (n) { this.autoStart = true; location.hash = '#/play/' + n.id + '/deck'; } else { toast('That\'s everything for now'); this.back(); } };
+      const back = el('button', 'btn end-back');
+      back.type = 'button';
+      back.append(svgIcon('back'), document.createTextNode('Back to practice'));
+      back.onclick = () => this.back();
+      card.append(more, back);
+    } else if (f) {
+      const b = el('button', 'btn end-back');
+      b.type = 'button';
+      b.append(svgIcon('folder'), document.createTextNode('Back to ' + f.name));
+      b.onclick = () => this.back();
+      card.appendChild(b);
+    } else {
+      const pick = pickBackUp(song.id);
+      if (pick) {
+        const c = comfortOf(pick);
+        card.appendChild(tile('While you\'re warmed up', pick, [pick.artist, c.label, playedAgo(pick)].filter(Boolean).join(' · '), 'play', () => { this.autoStart = false; location.hash = '#/play/' + pick.id; }));
+      }
+    }
+    const again = el('button', 'btn end-again');
+    again.type = 'button';
+    again.append(svgIcon('restart'), document.createTextNode('Play again'));
+    again.onclick = () => { this.restart(); this.play(); };
+    card.appendChild(again);
+    card.appendChild(comfortScale(song));
+    if (preview) card.classList.add('outro');
+    box.appendChild(card);
+    this.endCard = card;
+    this.manualUntil = 0;
+    this.touching = false;
   },
+  /* the outro has finished: the card that came in early becomes the real end of the song */
+  endFinal() {
+    this.endPreview = false;
+    if (this.fromDeck) deckDone(this.song.id);
+    const card = this.endCard;
+    if (!card) return;
+    card.classList.remove('outro');
+    const fn = this.onEndFinal;
+    this.onEndFinal = null;
+    if (fn && card.isConnected && card.querySelector('.end-tile')) fn();
+    // the last of today's five: celebrate now it's really done
+    if (this.fromDeck && !this.nextSong()) { const pr = deckProgress(); if (pr.roundDone >= DECK_SIZE && deck.celebrated <= deck.round) { deck.celebrated = deck.round + 1; saveDeck(); toast('Five songs practised. Nicely done.'); } }
+  },
+  stopEndTimer() {
+    if (this.endTimer) { clearTimeout(this.endTimer); this.endTimer = 0; }
+  },
+  clearEnd() {
+    this.stopEndTimer();
+    this.onEndFinal = null;
+    this.endPreview = false;
+    if (this.endCard) { this.endCard.remove(); this.endCard = null; }
+  },
+
   frame(ts) {
     if (!this.song) return;
     const dt = Math.min(0.25, (ts - this.lastFrame) / 1000);
@@ -2269,6 +2806,7 @@ const player = {
         upsertSong(this.song);
       }
       if (!this.timing && this.t >= this.tl.end) { this.t = this.tl.end; this.finished(); }
+      else if (!this.timing && !this.endCard && this.outroAt != null && this.t >= this.outroAt && this.t < this.endT() - 3) this.endSheet(true);
       else if (settings.pauseGaps && !this.timing) {
         const g = this.gaps.find((x) => !x.intro && this.t >= x.start && this.t < x.start + 1.5);
         if (g && g !== this.gapDone) { this.pause(); this.gapHold = g; this.gapDone = g; this.updateUi(); }
@@ -2411,6 +2949,7 @@ const player = {
   /* Jump anywhere: the cord, its clues and the cards all come through here. */
   seek(t, live) {
     if (this.timing || !this.tl) return;
+    this.clearEnd();
     this.t = clamp(t, 0, this.endT());
     this.manualUntil = 0;
     this.touching = false;
@@ -2496,6 +3035,8 @@ const player = {
         }
       }
     }
+    // once the song has ended, glide on to the end card
+    if (this.endCard) target = this.endCard.offsetTop - 28 + box.clientHeight * ANCHOR;
     target = Math.max(0, target - box.clientHeight * ANCHOR);
     const manual = this.touching || now < this.manualUntil;
     const away = Math.abs(target - box.scrollTop) > 60;
@@ -2507,7 +3048,7 @@ const player = {
     }
     if (manual) return;
     const diff = target - box.scrollTop;
-    if (Math.abs(diff) > 0.5) box.scrollTop += diff * Math.min(1, dt * 6);
+    if (Math.abs(diff) > 0.5) box.scrollTop += diff * Math.min(1, dt * (this.endCard ? 1.6 : 6)); // the end card glides in more slowly
   },
 
   /* ----- tap to time: build synced lyrics by tapping along ----- */
