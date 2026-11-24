@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Tempo and key test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&display=swap">
+<style>
+  /* Standalone diagnostics page for Stanze. Not linked from the app; safe to delete. */
+  :root {
+    --bg: #0a1215; --surface: rgba(228, 253, 225, .06); --border: rgba(228, 253, 225, .1);
+    --text: #e4fde1; --muted: #9cc3c0; --good: #4fd1a5; --warn: #ffc56b; --bad: #f45b69; --accent: #f45b69;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--text); font: 15px/1.45 "Hanken Grotesk", system-ui, sans-serif;
+    background: radial-gradient(120% 60% at 0% 0%, rgba(2, 128, 144, .28), transparent 60%), var(--bg);
+    background-attachment: fixed; min-height: 100vh;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1, h2, .num, button, .badge { font-family: "Bricolage Grotesque", system-ui, sans-serif; }
+  h1 { font-size: 26px; margin: 4px 0 6px; letter-spacing: -.02em; }
+  h2 { font-size: 17px; margin: 26px 0 10px; }
+  p { margin: 0 0 10px; color: var(--muted); }
+  button {
+    font-weight: 650; font-size: 16px; border: 0; border-radius: 14px; padding: 13px 18px; cursor: pointer; width: 100%;
+    color: #1c0b10; background: linear-gradient(135deg, #ff8f7e, #f45b69);
+  }
+  button:disabled { opacity: .5; }
+  .status { margin: 12px 0; padding: 12px 14px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); }
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+  .tier { padding: 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); }
+  .tier b { display: block; font-family: "Bricolage Grotesque", system-ui, sans-serif; }
+  .tier .num { font-size: 22px; font-weight: 750; }
+  .tier small { color: var(--muted); display: block; }
+  .card { padding: 12px 14px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); margin-bottom: 8px; }
+  .card .q { font-weight: 700; }
+  .card .tierlbl { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+  .row { display: grid; grid-template-columns: 84px 1fr auto; gap: 8px; align-items: baseline; margin-top: 6px; font-size: 14px; }
+  .row .k { color: var(--muted); font-size: 12px; }
+  .badge { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 99px; white-space: nowrap; }
+  .ok { background: rgba(79, 209, 165, .15); color: var(--good); }
+  .zero { background: rgba(255, 197, 107, .15); color: var(--warn); }
+  .none, .err { background: rgba(244, 91, 105, .15); color: var(--bad); }
+  .wait { background: var(--surface); color: var(--muted); }
+  .match { overflow-wrap: anywhere; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; font-size: 13px; color: var(--muted); align-items: center; }
+  .keybox { display: flex; gap: 8px; margin: 12px 0; }
+  .keybox input { flex: 1; min-width: 0; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; }
+  .keybox button { width: auto; }
+  .credit { font-size: 13px; }
+  a { color: #7fd8e3; }
+  .verdict { margin-top: 8px; font-size: 13px; color: var(--muted); }
+  .verdict b { color: var(--text); }
+  .key { background: rgba(127, 216, 227, .15); color: #7fd8e3; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tempo and key test</h1>
+  <p>This looks up the same 31 songs in two places: <b>Deezer</b> (what Stanze uses today) and <b>GetSongBPM</b>, which also knows the musical key. It shows where each one has a tempo, whether they agree, and the key.</p>
+  <p class="credit">Tempo and key data provided by <a href="https://getsongbpm.com" target="_blank" rel="noopener">GetSongBPM</a>.</p>
+
+  <h2>1. Your GetSongBPM key</h2>
+  <p>Paste the API key from your GetSongBPM email. It is saved only in this phone's browser, never on the website.</p>
+  <div class="keybox"><input id="key" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="API key"><button id="savekey">Save</button></div>
+
+  <h2>2. Run the test</h2>
+  <p>Press start and wait for it to finish (one to two minutes). Then screenshot the summary and scroll through the list.</p>
+  <button id="go">Start test</button>
+  <div class="status" id="status">Not started.</div>
+  <div class="legend"><span class="badge ok">120 BPM</span> tempo found <span class="badge zero">0</span> song found, no tempo <span class="badge none">no match</span> nothing found <span class="badge err">error</span> request failed <span class="badge key">E minor</span> key</div>
+
+  <h2>Summary</h2>
+  <div class="summary" id="summary"></div>
+
+  <h2>Songs</h2>
+  <div id="list"></div>
+</main>
+<script>
+'use strict';
+const DEEZER = 'https://api.deezer.com';
+// Docs name api.getsongbpm.com; newer examples use api.getsong.co. Try both.
+const GSB_HOSTS = ['https://api.getsongbpm.com', 'https://api.getsong.co'];
+const KEY_STORE = 'stanze.tempoTest.gsbKey';
+const SONGS = [
+  ['Classic', 'Queen', 'Bohemian Rhapsody'],
+  ['Classic', 'Fleetwood Mac', 'Dreams'],
+  ['Classic', 'Eagles', 'Hotel California'],
+  ['Classic', 'Michael Jackson', 'Billie Jean'],
+  ['Classic', 'Oasis', 'Wonderwall'],
+  ['Classic', 'Nirvana', 'Smells Like Teen Spirit'],
+  ['Classic', 'Bob Dylan', 'Like a Rolling Stone'],
+  ['2000s', 'Coldplay', 'Yellow'],
+  ['2000s', 'The Killers', 'Mr. Brightside'],
+  ['2000s', 'Amy Winehouse', 'Rehab'],
+  ['2000s', 'Snow Patrol', 'Chasing Cars'],
+  ['2000s', 'Jack Johnson', 'Banana Pancakes'],
+  ['2000s', 'Kings of Leon', 'Use Somebody'],
+  ['Recent hits', 'Ed Sheeran', 'Shape of You'],
+  ['Recent hits', 'Billie Eilish', 'bad guy'],
+  ['Recent hits', 'Harry Styles', 'As It Was'],
+  ['Recent hits', 'Taylor Swift', 'Anti-Hero'],
+  ['Recent hits', 'Olivia Rodrigo', 'drivers license'],
+  ['Recent hits', 'Noah Kahan', 'Stick Season'],
+  ['Recent hits', 'Hozier', 'Too Sweet'],
+  ['Your songs', 'Marika Hackman', 'Cigarettes'],
+  ['Your songs', 'Marika Hackman', 'Blood'],
+  ['Your songs', 'Marika Hackman', 'Skin'],
+  ['Your songs', 'Marika Hackman', 'Ophelia'],
+  ['Your songs', 'Marika Hackman', 'The Yellow Mile'],
+  ['Your songs', 'Fontaines D.C.', 'Where Is Gone'],
+  ['Your songs', 'Fontaines D.C.', 'I Love You'],
+  ['Your songs', 'The Lumineers', 'Stubborn Love'],
+  ['Your songs', 'Bon Iver', 'Speyside'],
+  ['Spelling test', 'fontaines dc', 'I Love You'],
+  ['Spelling test', 'lumineers', 'stubborn love'],
+];
+
+const norm = (x) => String(x || '').toLowerCase().replace(/\(.*?\)|\[.*?\]|feat\..*|[^a-z0-9]/g, '');
+const titleMatch = (a, b) => { const x = norm(a), y = norm(b); return x && y && (x.includes(y) || y.includes(x)); };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ---------- Deezer: same loose search as the app (JSONP) ---------- */
+function jsonp(url) {
+  return new Promise((resolve, reject) => {
+    const name = '__tktest' + Math.random().toString(36).slice(2);
+    const sc = document.createElement('script');
+    const done = () => { delete window[name]; sc.remove(); };
+    const timer = setTimeout(() => { done(); reject(new Error('timed out')); }, 8000);
+    window[name] = (data) => { clearTimeout(timer); done(); resolve(data); };
+    sc.onerror = () => { clearTimeout(timer); done(); reject(new Error('blocked')); };
+    sc.src = url + '&callback=' + name;
+    document.head.appendChild(sc);
+  });
+}
+async function deezerTrackBpm(id) {
+  const t = await jsonp(DEEZER + '/track/' + id + '?output=jsonp');
+  if (t && t.error) throw new Error(t.error.message || 'Deezer error');
+  return Math.round((t && t.bpm) || 0);
+}
+async function deezerLookup(artist, title) {
+  const found = await jsonp(DEEZER + '/search?' + new URLSearchParams({ q: artist + ' ' + title, limit: '8', output: 'jsonp' }));
+  if (found && found.error) throw new Error(found.error.message || 'Deezer error');
+  const hits = ((found && found.data) || []).filter((r) => titleMatch(r.title, title));
+  if (!hits.length) return { match: null };
+  let first = null;
+  for (const hit of hits.slice(0, 3)) {
+    const bpm = await deezerTrackBpm(hit.id);
+    await sleep(150);
+    const res = { match: hit.artist.name + ' – ' + hit.title + (hit.album ? ' (' + hit.album.title + ')' : ''), bpm };
+    if (!first) first = res;
+    if (bpm > 0) return res;
+  }
+  return first;
+}
+
+/* ---------- GetSongBPM ---------- */
+let gsbHost = null; // the host that answered first
+async function gsbGet(path, params) {
+  const key = localStorage.getItem(KEY_STORE) || '';
+  const hosts = gsbHost ? [gsbHost] : GSB_HOSTS;
+  let lastErr = null;
+  for (const host of hosts) {
+    const url = host + path + '?' + new URLSearchParams({ api_key: key, ...params });
+    let res;
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 10000);
+      res = await fetch(url, { signal: ctl.signal });
+      clearTimeout(timer);
+    } catch (e) {
+      lastErr = new Error(e.name === 'AbortError' ? 'timed out' : 'blocked by the browser');
+      continue;
+    }
+    if (res.status === 401 || res.status === 403) throw new Error('key not accepted (' + res.status + ')');
+    if (res.status === 429) throw new Error('too many requests');
+    if (!res.ok) { lastErr = new Error('HTTP ' + res.status); continue; }
+    gsbHost = host;
+    return res.json();
+  }
+  throw lastErr || new Error('no answer');
+}
+function asList(x) { return Array.isArray(x) ? x : []; }
+function gsbArtistName(s) { const a = s && s.artist; return (a && (a.name || (Array.isArray(a) && a[0] && a[0].name))) || ''; }
+async function gsbLookup(artist, title) {
+  const data = await gsbGet('/search/', { type: 'both', lookup: 'song:' + title + ' artist:' + artist, limit: '10' });
+  let hits = asList(data && data.search);
+  if (data && data.search && data.search.error && !hits.length) hits = [];
+  hits = hits.filter((s) => titleMatch(s.song_title || s.title, title));
+  if (!hits.length) return { match: null };
+  // prefer the right artist and a hit that has a tempo
+  const sameArtist = hits.filter((s) => titleMatch(gsbArtistName(s), artist));
+  const pool = sameArtist.length ? sameArtist : hits;
+  let hit = pool.find((s) => Number(s.tempo) > 0) || pool[0];
+  let bpm = Math.round(Number(hit.tempo) || 0);
+  let key = hit.key_of || '';
+  // search results sometimes leave tempo/key out; ask for the full song
+  if ((!bpm || !key) && (hit.song_id || hit.id)) {
+    try {
+      const full = await gsbGet('/song/', { id: hit.song_id || hit.id });
+      const s = full && full.song;
+      if (s) { bpm = bpm || Math.round(Number(s.tempo) || 0); key = key || s.key_of || ''; }
+    } catch (e) { /* keep what we have */ }
+  }
+  const album = hit.album && hit.album.title ? ' (' + hit.album.title + ')' : '';
+  return { match: gsbArtistName(hit) + ' – ' + (hit.song_title || hit.title) + album, bpm, key };
+}
+
+/* ---------- compare ---------- */
+function verdict(d, g) {
+  if (!(d && d.bpm > 0) || !(g && g.bpm > 0)) return null;
+  const a = d.bpm, b = g.bpm;
+  if (Math.abs(a - b) <= 3) return 'agree';
+  if (Math.abs(a - 2 * b) <= 4 || Math.abs(2 * a - b) <= 4) return 'halfdouble';
+  return 'differ';
+}
+const VERDICT_TEXT = {
+  agree: '<b>Both agree.</b>',
+  halfdouble: '<b>Half or double.</b> Same feel, one counts twice as fast.',
+  differ: '<b>They disagree.</b> One of them is probably wrong.',
+};
+
+function badge(r) {
+  if (!r) return '<span class="badge wait">waiting</span>';
+  if (r.error) return '<span class="badge err">error</span>';
+  if (!r.match) return '<span class="badge none">no match</span>';
+  return r.bpm > 0 ? '<span class="badge ok">' + r.bpm + ' BPM</span>' : '<span class="badge zero">0</span>';
+}
+function rowHtml(label, r) {
+  const text = !r ? '…' : r.error ? esc(r.error) : r.match ? esc(r.match) : 'No song found';
+  return '<div class="row"><span class="k">' + label + '</span><span class="match">' + text + '</span>' + badge(r) + '</div>';
+}
+function keyRow(g) {
+  if (!g || g.error || !g.match) return '';
+  const k = g.key ? '<span class="badge key">' + esc(g.key) + '</span>' : '<span class="badge zero">none</span>';
+  return '<div class="row"><span class="k">Key</span><span class="match"></span>' + k + '</div>';
+}
+
+const results = SONGS.map(() => ({}));
+function render() {
+  document.getElementById('list').innerHTML = SONGS.map(([tier, a, t], i) => {
+    const r = results[i];
+    const v = verdict(r.deezer, r.gsb);
+    return '<div class="card"><div class="tierlbl">' + esc(tier) + '</div><div class="q">' + esc(a) + ' – ' + esc(t) + '</div>' +
+      rowHtml('Deezer', r.deezer) + rowHtml('GetSongBPM', r.gsb) + keyRow(r.gsb) +
+      (v ? '<div class="verdict">' + VERDICT_TEXT[v] + '</div>' : '') + '</div>';
+  }).join('');
+  const has = (x) => x && x.bpm > 0;
+  const tiers = [...new Set(SONGS.map((s) => s[0]))].concat(['All songs']);
+  document.getElementById('summary').innerHTML = tiers.map((tier) => {
+    const idx = SONGS.map((s, i) => (tier === 'All songs' || s[0] === tier ? i : -1)).filter((i) => i >= 0);
+    const n = idx.length;
+    const c = (f) => idx.filter((i) => f(results[i])).length;
+    return '<div class="tier"><b>' + esc(tier) + '</b><span class="num">' + c((r) => has(r.deezer) || has(r.gsb)) + '/' + n + '</span><small>tempo from either</small>' +
+      '<small>Deezer: ' + c((r) => has(r.deezer)) + '/' + n + '</small>' +
+      '<small>GetSongBPM: ' + c((r) => has(r.gsb)) + '/' + n + '</small>' +
+      '<small>Key: ' + c((r) => r.gsb && r.gsb.key) + '/' + n + '</small>' +
+      '<small>Disagree: ' + c((r) => verdict(r.deezer, r.gsb) === 'differ') + '</small></div>';
+  }).join('');
+}
+
+const keyInput = document.getElementById('key');
+try { keyInput.value = localStorage.getItem(KEY_STORE) || ''; } catch (e) { /* private mode */ }
+document.getElementById('savekey').onclick = () => {
+  try { localStorage.setItem(KEY_STORE, keyInput.value.trim()); } catch (e) { /* ignore */ }
+  document.getElementById('status').textContent = keyInput.value.trim() ? 'Key saved on this phone.' : 'Key cleared.';
+};
+
+document.getElementById('go').onclick = async () => {
+  const btn = document.getElementById('go');
+  const status = document.getElementById('status');
+  try { localStorage.setItem(KEY_STORE, keyInput.value.trim()); } catch (e) { /* ignore */ }
+  btn.disabled = true;
+  let gsbOk = !!keyInput.value.trim();
+  let gsbNote = gsbOk ? '' : 'No GetSongBPM key yet, so only Deezer will run. ';
+  status.textContent = 'Checking both services can be reached…';
+  try {
+    const ping = await jsonp(DEEZER + '/search?q=test&limit=1&output=jsonp');
+    if (!(ping && ping.data)) throw new Error('odd answer');
+  } catch (e) {
+    status.textContent = 'Could not reach Deezer from this phone (' + e.message + '). A content blocker, private DNS or privacy setting may be stopping it.';
+    btn.disabled = false;
+    return;
+  }
+  if (gsbOk) {
+    try { await gsbGet('/search/', { type: 'song', lookup: 'yellow', limit: '1' }); }
+    catch (e) { gsbOk = false; gsbNote = 'GetSongBPM did not work (' + e.message + '), so only Deezer will run. Please screenshot this message. '; }
+  }
+  status.textContent = gsbNote + 'Checking songs…';
+  for (let i = 0; i < SONGS.length; i++) {
+    const [, artist, title] = SONGS[i];
+    status.textContent = gsbNote + 'Checking ' + (i + 1) + ' of ' + SONGS.length + ': ' + artist + ' – ' + title;
+    try { results[i].deezer = await deezerLookup(artist, title); } catch (e) { results[i].deezer = { error: e.message }; }
+    await sleep(200);
+    if (gsbOk) {
+      try { results[i].gsb = await gsbLookup(artist, title); } catch (e) { results[i].gsb = { error: e.message }; }
+      await sleep(400);
+    } else {
+      results[i].gsb = { error: 'not run' };
+    }
+    render();
+  }
+  const has = (x) => x && x.bpm > 0;
+  const d = results.filter((r) => has(r.deezer)).length;
+  const g = results.filter((r) => has(r.gsb)).length;
+  const e = results.filter((r) => has(r.deezer) || has(r.gsb)).length;
+  status.textContent = gsbNote + 'Done. Tempo from Deezer for ' + d + ' of ' + SONGS.length + ', from GetSongBPM for ' + g + ', and from at least one of them for ' + e + '. Please screenshot the summary and the list.';
+  btn.disabled = false;
+  btn.textContent = 'Run again';
+};
+render();
+</script>
+</body>
+</html>
