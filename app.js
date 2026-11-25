@@ -1049,13 +1049,22 @@ function renderLibrary() {
     b.setAttribute('aria-selected', b.dataset.view === view);
   });
   $('#lib-sort').hidden = view === 'folders';
+  // the tuning filter only appears once a song is in something other than standard
+  const tunings = [...new Set(songs.map(tuningOf))];
+  if (libTuning && !tunings.includes(libTuning)) libTuning = null;
+  const tb = $('#lib-tuning');
+  tb.hidden = view === 'folders' || tunings.length < 2;
+  tb.classList.toggle('active', !!libTuning && !tb.hidden);
+  $('#lib-tuning-label').textContent = libTuning || 'Tuning';
+  tb.setAttribute('aria-label', libTuning ? 'Showing songs in ' + libTuning + '. Change tuning filter' : 'Filter by tuning');
+  const inTuning = (s) => tb.hidden || !libTuning || tuningOf(s) === libTuning;
   $('#lib-sort-label').textContent = SORTS[settings.libSort].short;
   $('#lib-filter').placeholder = view === 'folders' ? 'Filter folders' : view === 'artists' ? 'Filter artists or songs' : 'Filter songs';
   $('#lib-filter').parentElement.hidden = view !== 'folders' && songs.length === 0;
   const box = $('#lib-list');
   box.innerHTML = '';
   const q = $('#lib-filter').value.trim().toLowerCase();
-  const match = (s) => !q || (s.title + ' ' + (s.artist || '')).toLowerCase().includes(q);
+  const match = (s) => inTuning(s) && (!q || (s.title + ' ' + (s.artist || '')).toLowerCase().includes(q));
   const empty = $('#lib-empty');
   empty.hidden = true;
   let letters = null;
@@ -1097,16 +1106,16 @@ function renderLibrary() {
       groups.get(key).push(s);
     }
     let names = [...groups.keys()].sort((a, b) => (a === 'Unknown artist') - (b === 'Unknown artist') || collator.compare(sortName(a), sortName(b)));
-    if (q) names = names.filter((n) => n.toLowerCase().includes(q) || groups.get(n).some(match));
+    if (q || libTuning) names = names.filter((n) => (q && n.toLowerCase().includes(q) && groups.get(n).some(inTuning)) || groups.get(n).some(match));
     const big = names.length >= BIG_LIST;
     let lastLetter = null;
     letters = new Map();
     for (const name of names) {
       const list = groups.get(name).slice().sort(SORTS[settings.libSort].fn);
-      const shownSongs = q && !name.toLowerCase().includes(q) ? list.filter(match) : list;
+      const shownSongs = q && !name.toLowerCase().includes(q) ? list.filter(match) : list.filter(inTuning);
       const L = name === 'Unknown artist' ? '#' : letterOf(name);
       if (big && L !== lastLetter) { const hd = el('div', 'letter-head', L); box.appendChild(hd); letters.set(L, hd); lastLetter = L; }
-      const g = el('div', 'group' + (q || openArtists.has(name) ? ' open' : ''));
+      const g = el('div', 'group' + (q || libTuning || openArtists.has(name) ? ' open' : ''));
       if (!letters.has(L)) letters.set(L, g);
       const head = el('div', 'group-head');
       const cov = el('div', 'cover round');
@@ -1114,7 +1123,7 @@ function renderLibrary() {
       if (withArt) paintCover(cov, withArt); else cov.appendChild(svgIcon('person'));
       const total = list.reduce((s, x) => s + (x.duration || 0), 0);
       const m = el('div', 'meta');
-      m.append(el('div', 't', name), el('div', 'a', list.length + (list.length === 1 ? ' song' : ' songs') + (total ? ' · ' + fmtTotal(total) : '')));
+      m.append(el('div', 't', name), el('div', 'a', shownSongs.length + (shownSongs.length === 1 ? ' song' : ' songs') + (libTuning ? ' in ' + libTuning : '') + (total && !libTuning ? ' · ' + fmtTotal(total) : '')));
       const chev = svgIcon('chevron');
       chev.classList.add('chev');
       head.append(cov, m, chev);
@@ -1129,7 +1138,7 @@ function renderLibrary() {
       box.appendChild(g);
     }
     if (!big) letters = null;
-    if (!names.length) { empty.hidden = false; empty.textContent = songs.length ? 'No artists match that filter.' : 'No songs yet. Use Find to look one up, or the plus button to paste your own.'; }
+    if (!names.length) { empty.hidden = false; empty.textContent = songs.length ? (libTuning && !q ? 'No artists with songs in ' + libTuning + '.' : 'No artists match that filter.') : 'No songs yet. Use Find to look one up, or the plus button to paste your own.'; }
   } else {
     const sort = SORTS[settings.libSort];
     const list = songs.filter(match).sort(sort.fn);
@@ -1146,11 +1155,32 @@ function renderLibrary() {
       ul.appendChild(songTile(s));
     }
     threadList(ul, false);
-    if (!list.length) { empty.hidden = false; empty.textContent = songs.length ? 'No songs match that filter.' : 'No songs yet. Use Find to look one up, or the plus button to paste your own.'; }
+    if (!list.length) { empty.hidden = false; empty.textContent = songs.length ? (libTuning && !q ? 'No songs in ' + libTuning + '.' : 'No songs match that filter.') : 'No songs yet. Use Find to look one up, or the plus button to paste your own.'; }
   }
   renderAlphaRail(letters);
 }
 const openArtists = new Set();
+let libTuning = null; // tuning filter for this visit (not saved, so songs never seem to go missing)
+$('#lib-tuning').onclick = () => {
+  const body = el('div', 'levels');
+  const counts = new Map();
+  for (const s of songs) counts.set(tuningOf(s), (counts.get(tuningOf(s)) || 0) + 1);
+  const order = (n) => { const i = TUNINGS.findIndex((t) => t.name === n); return i < 0 ? 99 : i; };
+  const names = [...counts.keys()].sort((a, b) => order(a) - order(b) || collator.compare(a, b));
+  const opt = (value, label, sub) => {
+    const b = el('button', 'level' + (libTuning === value ? ' active' : ''));
+    b.type = 'button';
+    const t = el('span', 'grow', label);
+    if (sub) t.appendChild(el('small', null, sub));
+    b.append(t);
+    if (libTuning === value) b.appendChild(svgIcon('check'));
+    b.onclick = () => { libTuning = value; closeModal(); renderLibrary(); };
+    body.appendChild(b);
+  };
+  opt(null, 'All tunings', songs.length + (songs.length === 1 ? ' song' : ' songs'));
+  for (const n of names) opt(n, n, [tuningNotes(n), counts.get(n) + (counts.get(n) === 1 ? ' song' : ' songs')].filter(Boolean).join(' · '));
+  openModal('Show songs in', body);
+};
 
 /* A to Z jump bar for big lists: tap or slide a finger down it */
 function renderAlphaRail(letters) {
@@ -1468,14 +1498,15 @@ function enableSwipeAway(ul) {
 /* Song options: comfort level, folders, edit, delete */
 /* A song you've started learning (Learning or Getting there) that has gone longest without a play.
  * Anything played in the last day doesn't count as "a while". */
-function pickBackUp(exceptId) {
+function pickBackUp(exceptId, like) {
   const dayAgo = Date.now() - 86400000;
   const cands = songs.filter((s) => {
     if (s.id === exceptId) return false;
     const c = comfortOf(s);
     return c && (c.level === 1 || c.level === 2) && (s.lastPlayed || 0) < dayAgo;
   });
-  cands.sort((a, b) => (a.lastPlayed || 0) - (b.lastPlayed || 0));
+  // favour songs you can play without retuning or moving the capo, then the longest unplayed
+  cands.sort((a, b) => (like ? setupMatch(b, like) - setupMatch(a, like) : 0) || (a.lastPlayed || 0) - (b.lastPlayed || 0));
   return cands[0] || null;
 }
 function playedAgo(s) {
@@ -1667,7 +1698,7 @@ function openSongSheet(song, folderId) {
   add.onclick = () => openFolderPicker(song);
   fo.appendChild(add);
   body.appendChild(fo);
-  const stats = [song.plays ? song.plays + (song.plays === 1 ? ' play' : ' plays') : 'Not played yet', song.bpm ? song.bpm + ' BPM' : '', song.key ? 'Key of ' + song.key : ''].filter(Boolean).join(' · ');
+  const stats = [song.plays ? song.plays + (song.plays === 1 ? ' play' : ' plays') : 'Not played yet', song.bpm ? song.bpm + ' BPM' : '', song.key ? 'Key of ' + song.key : '', setupLabel(song)].filter(Boolean).join(' · ');
   body.appendChild(el('div', 'muted small', stats));
   openModal(song.title || 'Song', body, [
     { label: 'Edit song', run: () => (location.hash = '#/edit/' + song.id) },
@@ -1782,6 +1813,7 @@ function openEditor(id) {
   $('#edit-bpm').value = editing.bpm || '';
   $('#edit-bpb').value = String(editing.beatsPerBar || 4);
   $('#edit-key').value = editing.key || '';
+  paintEditSetup();
   $('#edit-bpm-note').textContent = editing.bpm && editing.bpmSource === 'deezer' ? 'Suggested from online data. Tap along to check it.' : 'Tap along with the recording, or type it in.';
   $('#edit-tap').textContent = 'Tap on the beat';
   $('#edit-lyrics').value = editing.lyrics || '';
@@ -1790,6 +1822,12 @@ function openEditor(id) {
 }
 const editTap = makeTapper((n) => { $('#edit-bpm').value = n; editDirty = true; $('#edit-tap').textContent = n + ' BPM · keep tapping'; }, (left) => { $('#edit-tap').textContent = 'Keep going… ' + left + ' more'; });
 $('#edit-tap').onpointerdown = (e) => { e.preventDefault(); editTap(); };
+function paintEditSetup() {
+  $('#edit-setup-val').textContent = setupLabel(editing) || 'Standard, no capo';
+}
+$('#edit-setup').onclick = () => {
+  if (editing) openSetupSheet(editing, (c, t) => { applySetup(editing, c, t); editDirty = true; paintEditSetup(); });
+};
 $('#edit-key').addEventListener('blur', (e) => { e.target.value = normKey(e.target.value); });
 for (const id of ['#edit-title', '#edit-artist', '#edit-duration', '#edit-bpm', '#edit-bpb', '#edit-key', '#edit-lyrics']) $(id).addEventListener('input', () => (editDirty = true));
 $('#edit-back').onclick = () => {
@@ -2418,12 +2456,34 @@ const player = {
     this.gaps = this.song ? findGaps(tl, this.song, this.synced && !this.timing) : [];
     this.cur = -2;
     this.hasChords = tl.lines.some((l) => l.hasChords);
+    this.paintSetup(true);
     this.buildGapCards();
     box.scrollTop = 0;
     // a long musical outro after the last sung line: the end card can come in softly while it plays
     const sung = tl.lines.filter((l) => l.kind === 'lyric' && l.hasWords && l.time != null);
     const lastSung = sung.length ? sung[sung.length - 1].time : null;
     this.outroAt = lastSung != null && tl.end - lastSung > 12 ? lastSung + 5 : null;
+  },
+  /* Capo and tuning sit quietly at the very top of the lyrics and scroll away with them. Nothing
+   * shows for standard tuning with no capo. Tap it to change either. */
+  paintSetup(quiet) {
+    const box = $('#p-lyrics');
+    if (!box) return;
+    let n = box.querySelector('.setup-line');
+    const s = this.song;
+    const capo = capoOf(s);
+    const tun = s && s.tuning;
+    if (!capo && !tun) { if (n) { n.remove(); if (!quiet) this.layout(); } return; }
+    if (!n) { n = el('button', 'setup-line'); n.type = 'button'; box.insertBefore(n, box.firstChild); }
+    n.innerHTML = '';
+    if (capo) n.appendChild(el('b', null, 'Capo ' + capo));
+    if (tun) {
+      n.appendChild(el('b', null, tun));
+      const nt = tuningNotes(tun);
+      if (nt) n.appendChild(el('span', 'sl-notes', nt));
+    }
+    n.setAttribute('aria-label', setupLabel(s, true) + '. Change capo and tuning');
+    if (!quiet) this.layout();
   },
   /* The song starts at the top of the screen (no empty space above it). Padding below lets the last line reach the anchor. */
   layout() {
@@ -2730,10 +2790,12 @@ const player = {
       b.onclick = () => this.back();
       card.appendChild(b);
     } else {
-      const pick = pickBackUp(song.id);
+      const pick = pickBackUp(song.id, song);
       if (pick) {
         const c = comfortOf(pick);
-        card.appendChild(tile('While you\'re warmed up', pick, [pick.artist, c.label, playedAgo(pick)].filter(Boolean).join(' · '), 'play', () => { this.autoStart = false; location.hash = '#/play/' + pick.id; }));
+        // say so when it's the same non-standard setup, so you know you can leave the guitar as it is
+        const same = setupLabel(song) && setupMatch(pick, song) === 3 ? 'Same setup, ' + setupLabel(song) : '';
+        card.appendChild(tile(same || 'While you\'re warmed up', pick, [pick.artist, c.label, playedAgo(pick)].filter(Boolean).join(' · '), 'play', () => { this.autoStart = false; location.hash = '#/play/' + pick.id; }));
       }
     }
     const again = el('button', 'btn end-again');
@@ -3368,6 +3430,129 @@ function normKey(raw) {
   const minor = m[3] && /^(m|min|minor|-)$/i.test(m[3]) && m[3] !== 'M' ? 'm' : '';
   return m[1].toUpperCase() + acc + minor;
 }
+/* ---------- capo and tuning (F8) ----------
+ * Typed in by hand, like the key. No tuning saved means standard, and no capo means 0.
+ * A name that isn't one of these (like "Nick Drake CGCFCE") is kept as typed. */
+const TUNINGS = [
+  { name: 'Standard', notes: 'E A D G B E' },
+  { name: 'Half step down', short: 'Half down', notes: 'Eb Ab Db Gb Bb Eb' },
+  { name: 'Whole step down', short: 'Whole down', notes: 'D G C F A D' },
+  { name: 'Drop D', notes: 'D A D G B E' },
+  { name: 'Double drop D', short: 'Double drop', notes: 'D A D G B D' },
+  { name: 'Drop C', notes: 'C G C F A D' },
+  { name: 'DADGAD', notes: 'D A D G A D' },
+  { name: 'Open G', notes: 'D G D G B D' },
+  { name: 'Open D', notes: 'D A D F# A D' },
+  { name: 'Open E', notes: 'E B E G# B E' },
+  { name: 'Open C', notes: 'C G C G C E' },
+];
+const CAPO_MAX = 11;
+const squash = (v) => String(v || '').toLowerCase().replace(/[\s\-_,]+/g, '');
+function tuningPreset(name) {
+  const k = squash(name);
+  if (!k) return TUNINGS[0];
+  return TUNINGS.find((t) => squash(t.name) === k || squash(t.short) === k || squash(t.notes) === k) || null;
+}
+/* tidy a typed tuning: preset names (or their notes) become the preset; standard is stored as nothing */
+function normTuning(raw) {
+  const v = String(raw || '').trim().replace(/\s+/g, ' ').slice(0, 24);
+  if (!v || ['std', 'estandard'].includes(squash(v))) return '';
+  const p = tuningPreset(v);
+  return p ? (p === TUNINGS[0] ? '' : p.name) : v;
+}
+const tuningOf = (s) => (s && s.tuning) || 'Standard';
+const capoOf = (s) => Math.max(0, Math.min(CAPO_MAX, parseInt(s && s.capo, 10) || 0));
+/* the string notes, when they say something the name doesn't (DADGAD already spells itself) */
+function tuningNotes(name) {
+  const p = tuningPreset(name);
+  return p && squash(p.notes) !== squash(p.name) ? p.notes : '';
+}
+/* "Capo 2 · Drop D", or '' for standard tuning with no capo */
+function setupLabel(s, withNotes) {
+  const parts = [];
+  if (capoOf(s)) parts.push('Capo ' + capoOf(s));
+  if (s && s.tuning) parts.push(s.tuning + (withNotes && tuningNotes(s.tuning) ? ' (' + tuningNotes(s.tuning) + ')' : ''));
+  return parts.join(' · ');
+}
+function applySetup(song, capo, tuning) {
+  if (capo > 0) song.capo = capo; else delete song.capo;
+  const t = normTuning(tuning);
+  if (t) song.tuning = t; else delete song.tuning;
+}
+/* How close another song's setup is to the one you're in: same tuning matters most (retuning takes a
+ * while), then the same capo. */
+function setupMatch(a, b) {
+  return (tuningOf(a) === tuningOf(b) ? 2 : 0) + (capoOf(a) === capoOf(b) ? 1 : 0);
+}
+
+/* One small sheet for both: a capo stepper and a grid of tunings. onSave gets (capo, tuning). */
+function openSetupSheet(song, onSave) {
+  let capo = capoOf(song);
+  let tuning = tuningOf(song);
+  const body = el('div', 'stack setup-sheet');
+  // capo
+  const capoRow = el('div', 'setup-row');
+  const step = el('div', 'stepper capo-stepper');
+  const minus = el('button', null);
+  const plus = el('button', null);
+  minus.type = plus.type = 'button';
+  minus.appendChild(svgIcon('minus'));
+  plus.appendChild(svgIcon('plus'));
+  minus.setAttribute('aria-label', 'Capo down a fret');
+  plus.setAttribute('aria-label', 'Capo up a fret');
+  const val = el('output', 'capo-val');
+  val.setAttribute('aria-live', 'polite');
+  const showCapo = () => {
+    val.textContent = capo ? 'Fret ' + capo : 'None';
+    minus.disabled = capo <= 0;
+    plus.disabled = capo >= CAPO_MAX;
+  };
+  minus.onclick = () => { capo = Math.max(0, capo - 1); showCapo(); };
+  plus.onclick = () => { capo = Math.min(CAPO_MAX, capo + 1); showCapo(); };
+  step.append(minus, val, plus);
+  capoRow.append(el('span', 'field-label', 'Capo'), step);
+  body.appendChild(capoRow);
+  // tuning
+  body.appendChild(el('div', 'field-label', 'Tuning'));
+  const grid = el('div', 'tune-grid');
+  grid.setAttribute('role', 'group');
+  grid.setAttribute('aria-label', 'Tuning');
+  const custom = el('input', 'input tune-custom');
+  Object.assign(custom, { placeholder: 'Name or notes, e.g. C G C F C E', maxLength: 24, autocomplete: 'off', spellcheck: false });
+  custom.setAttribute('aria-label', 'Your own tuning');
+  const notes = el('p', 'muted small tune-notes');
+  let other = !tuningPreset(tuning);
+  const btns = [];
+  const paint = () => {
+    for (const b of btns) b.setAttribute('aria-pressed', String(b.dataset.t ? !other && squash(b.dataset.t) === squash(tuning) : other));
+    custom.hidden = !other;
+    const p = !other && tuningPreset(tuning);
+    notes.textContent = p ? p.notes : 'Type a name or the string notes, low to high.';
+  };
+  for (const t of TUNINGS.concat([{ name: '', short: 'Other' }])) {
+    const b = el('button', null, t.short || t.name);
+    b.type = 'button';
+    b.dataset.t = t.name;
+    if (t.short && t.name) b.setAttribute('aria-label', t.name);
+    b.onclick = () => {
+      other = !t.name;
+      tuning = other ? custom.value.trim() : t.name;
+      paint();
+      if (!t.name) custom.focus();
+    };
+    btns.push(b);
+    grid.appendChild(b);
+  }
+  custom.value = other ? tuning : '';
+  custom.addEventListener('input', () => { tuning = custom.value.trim(); });
+  body.append(grid, custom, notes);
+  showCapo();
+  paint();
+  openModal('Capo and tuning', body, [
+    { label: 'Cancel' },
+    { label: 'Save', primary: true, run: () => onSave(capo, tuning) },
+  ]);
+}
 function tempoAlt(bpm) {
   if (bpm >= 150) return Math.round(bpm / 2);
   if (bpm <= 75) return bpm * 2;
@@ -3639,6 +3824,7 @@ function openPlaybackSheet() {
   if (!player.timing) mk2('Tie a knot here', 'flag', () => openTieSheet());
   if (song.knots && song.knots.length) mk2('Untie my knots', null, () => { player.untieKnots(); toast('Your knots are untied'); });
   mk2('Tap to time', 'timer', () => player.startTiming());
+  mk2('Capo and tuning', null, () => openSetupSheet(song, (c, t) => saveSetup(song, c, t)));
   if (player.nextSong()) mk2('Next in folder', 'next', () => player.goNext());
   mk2('Edit song', 'edit', () => (location.hash = '#/edit/' + song.id));
   body.appendChild(acts);
@@ -3651,8 +3837,14 @@ $('#t-next').onclick = () => player.timingTap();
 $('#t-cancel').onclick = () => player.stopTiming();
 window.addEventListener('resize', () => { if (player.song) { player.layout(); cord.build(); } });
 
+function saveSetup(song, capo, tuning) {
+  applySetup(song, capo, tuning);
+  upsertSong(song);
+  if (player.song && player.song.id === song.id) player.paintSetup();
+}
 const lyr = $('#p-lyrics');
 lyr.addEventListener('click', (e) => {
+  if (e.target.closest('.setup-line')) { const s = player.song; if (s) openSetupSheet(s, (c, t) => saveSetup(s, c, t)); return; }
   const card = e.target.closest('.gap-inline');
   if (card) { player.seek(+card.dataset.t); return; }
   const line = e.target.closest('.line');

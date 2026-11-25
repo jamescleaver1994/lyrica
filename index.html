@@ -45,6 +45,7 @@
       <symbol id="i-metronome" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 20L10 4h4l3 16z"/><path d="M12 15l5-7"/></g></symbol>
       <symbol id="i-click" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5h3l4.5-4v13L7 14.5H4z"/><path d="M15 9a4 4 0 010 6M17.8 6.5a7.5 7.5 0 010 11"/></g></symbol>
       <symbol id="i-flag" viewBox="0 0 24 24"><path d="M7 21V4M7 4h10l-2.5 4L17 12H7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-tuning" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21V11M16 21V11"/><path d="M7 11h10l-1-6.5a1.5 1.5 0 00-1.5-1.3h-5A1.5 1.5 0 008 4.5z"/><path d="M4.5 6h3M16.5 8h3"/></g></symbol>
       <symbol id="i-person" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1.2-3.6 4-5.5 7-5.5s5.8 1.9 7 5.5"/></g></symbol>
     </defs>
   </svg>
@@ -66,6 +67,7 @@
       <div class="row gap lib-tools">
         <input id="lib-filter" class="input grow" type="search" placeholder="Filter" autocomplete="off">
         <button class="btn small sort-btn" id="lib-sort" type="button"><svg><use href="#i-sort"/></svg><span id="lib-sort-label">Recent</span></button>
+        <button class="btn small sort-btn tune-btn" id="lib-tuning" type="button" hidden><svg><use href="#i-tuning"/></svg><span id="lib-tuning-label">Tuning</span></button>
       </div>
       <div id="lib-list" class="lib-list"></div>
       <p id="lib-empty" class="empty" hidden></p>
@@ -170,6 +172,7 @@
         <label class="key-row"><span class="field-label">Key</span>
           <input id="edit-key" class="input key-input" placeholder="G, F#m, Bb" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12">
         </label>
+        <button type="button" class="setup-edit" id="edit-setup"><span class="field-label">Capo and tuning</span><b id="edit-setup-val">Standard, no capo</b><svg><use href="#i-chevron"/></svg></button>
       </div>
       <label>Lyrics
         <textarea id="edit-lyrics" class="input lyrics-input" spellcheck="false" placeholder="Paste lyrics here, one line per line.&#10;&#10;Optional chords go in square brackets before the word:&#10;[G]First line of my [D]song"></textarea>
