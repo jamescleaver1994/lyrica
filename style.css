@@ -1241,26 +1241,36 @@ ul.threaded > li.hint-nudge .bead { background: var(--accent); }
 .ls-songs { margin: 0 0 6px; }
 
 /* ---------- song key (1.10.0) ---------- */
-.key-chip {
-  flex: none; display: inline-flex; align-items: baseline; gap: 5px; height: 40px; padding: 0 13px;
-  border-radius: 999px; border: 2px solid rgba(127, 227, 214, .28); background: #183139; color: var(--chord);
-  cursor: pointer; transition: transform .18s var(--spring), background-color .2s; line-height: 36px;
+/* in the player it's a quiet label beside the artist, styled like the chord names above the lyrics */
+.p-sub { display: flex; justify-content: center; align-items: baseline; gap: 0; min-width: 0; white-space: nowrap; }
+.p-sub #p-artist { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.p-key {
+  flex: none; border: 0; background: none; padding: 4px 2px; margin: -4px 0; cursor: pointer;
+  color: var(--chord); font: 700 13px var(--font-display); letter-spacing: 0;
 }
-.key-chip:active { transform: scale(.94); background: var(--surface-strong); }
-.key-chip small { font: 700 10px var(--font-display); color: var(--muted); letter-spacing: .06em; text-transform: uppercase; }
-.key-chip b { font: 800 18px var(--font-display); letter-spacing: -.01em; max-width: 7.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.key-input { width: 96px; flex: none; font: 700 20px var(--font-display); text-align: center; }
-.key-label { margin-top: 6px; }
-.key-row { align-items: center; }
+.p-key b { font-weight: 800; }
+#p-artist:not(:empty) + .p-key::before { content: "·"; color: var(--muted); padding: 0 7px; font-weight: 400; }
+.key-row { display: flex; flex-direction: row; align-items: center; gap: 12px; align-self: stretch; }
+.key-row .field-label { flex: 1; }
+.key-input { width: 128px; flex: none; font: 700 18px var(--font-display); text-align: center; padding-top: 10px; padding-bottom: 10px; }
 
-/* ---------- swipe between the main screens (1.10.0) ---------- */
-.view.tabbed > .content.tab-drag { transition: none; will-change: transform; }
-.view.tabbed > .content.tab-settle { transition: transform .32s var(--spring), opacity .25s ease; }
-.view.tabbed.tab-in-left > .content { animation: tab-in-left .36s var(--unspool) both; }
-.view.tabbed.tab-in-right > .content { animation: tab-in-right .36s var(--unspool) both; }
-@keyframes tab-in-left { from { transform: translateX(-48px); opacity: 0; } to { transform: none; opacity: 1; } }
-@keyframes tab-in-right { from { transform: translateX(48px); opacity: 0; } to { transform: none; opacity: 1; } }
-@media (prefers-reduced-motion: reduce) {
-  .view.tabbed.tab-in-left > .content, .view.tabbed.tab-in-right > .content { animation: none; }
-  .view.tabbed > .content.tab-settle { transition: none; }
+/* tempo cord: a straight length of cord under the number, so a thumb on it never hides the tempo */
+.tempo-cord { display: flex; align-items: center; gap: 12px; touch-action: none; cursor: grab; padding: 6px 2px; user-select: none; -webkit-user-select: none; }
+.tempo-cord:focus { outline: none; }
+.tempo-cord:focus-visible { outline: 3px solid var(--text); outline-offset: 4px; border-radius: 999px; }
+.tc-end { font: 600 12px var(--font-body); color: var(--muted); flex: none; }
+.tc-track { position: relative; flex: 1; height: 8px; border-radius: 999px; background: rgba(228, 253, 225, .16); margin: 14px 0; transition: height .15s; }
+.tempo-cord.turning .tc-track { height: 12px; }
+.tc-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: inherit; background: var(--text); }
+.tc-bead {
+  position: absolute; top: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 4px var(--surface-raised); transform: scale(var(--pulse, 1));
 }
+.tc-bead.none { display: none; }
+.tempo-sheet { gap: 12px; }
+.tempo-sheet .big-stepper { padding: 0; }
+.tempo-sheet .big-mid { width: auto; height: auto; border-radius: 0; padding: 4px 0; }
+.tempo-sheet .big-bpm { font-size: 56px; }
+.tempo-sheet .tap-pad { min-height: 64px; font-size: 18px; }
+.tempo-sheet .tap-pad.lead { min-height: 84px; }
+.tempo-sheet > p { margin: 0; }

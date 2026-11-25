@@ -4,7 +4,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '1.10.0';
 const LRCLIB = 'https://lrclib.net/api';
 const ITUNES = 'https://itunes.apple.com/search';
 const DEEZER = 'https://api.deezer.com';
@@ -684,17 +684,8 @@ function findGaps(tl, song, synced) {
 /* ---------------- router ---------------- */
 const views = ['library', 'folder', 'search', 'practice', 'edit', 'settings', 'player'];
 const TAB_OF = { library: 'library', folder: 'library', search: 'search', practice: 'practice', settings: 'settings' };
-let tabEnter = null; // 'left' or 'right' when the next screen should slide in from that side
 function show(name) {
   for (const v of views) $('#view-' + v).hidden = v !== name;
-  if (tabEnter && TAB_OF[name]) {
-    const view = $('#view-' + name), cls = 'tab-in-' + tabEnter;
-    view.classList.remove('tab-in-left', 'tab-in-right');
-    void view.offsetWidth;
-    view.classList.add(cls);
-    setTimeout(() => view.classList.remove(cls), 420);
-  }
-  tabEnter = null;
   document.documentElement.classList.toggle('in-player', name === 'player');
   $('#tabbar').classList.toggle('hide', !TAB_OF[name]);
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === TAB_OF[name]));
@@ -719,78 +710,6 @@ function route() {
   else openLibrary();
 }
 window.addEventListener('hashchange', route);
-
-/* Swipe left or right between the four main screens, as well as tapping the tab bar.
- * Only a clearly sideways swipe counts, so scrolling is untouched. It never starts on anything that
- * has its own sideways gesture (practice deck cards, sliders, switches, pickers, rows that scroll
- * sideways, the reorder beads) or at the very edge of the screen, where the phone's back gesture lives.
- * The screen follows your finger a little, and stretches but won't go past the first or last tab. */
-const MAIN_TABS = [['library', '#/'], ['search', '#/search'], ['practice', '#/practice'], ['settings', '#/settings']];
-const tabIndex = () => MAIN_TABS.findIndex(([v]) => !$('#view-' + v).hidden);
-document.addEventListener('click', (e) => {
-  const tab = e.target.closest('#tabbar .tab');
-  if (!tab) return;
-  const from = tabIndex(), to = MAIN_TABS.findIndex(([v]) => v === TAB_OF[tab.dataset.tab]);
-  if (from >= 0 && to >= 0 && from !== to) tabEnter = to > from ? 'right' : 'left';
-}, true);
-(function tabSwipe() {
-  let g = null;
-  const OWN_GESTURE = 'input, textarea, select, [contenteditable], [role=slider], .segmented, .deck-list > li, .bead, .alpha-rail, .cord, .no-swipe';
-  const sideways = (t) => {
-    for (let n = t; n && n !== document.body; n = n.parentElement) {
-      if (n.scrollWidth > n.clientWidth + 2 && /auto|scroll/.test(getComputedStyle(n).overflowX)) return true;
-    }
-    return false;
-  };
-  const settle = (content) => {
-    content.classList.remove('tab-drag');
-    content.classList.add('tab-settle');
-    content.style.transform = '';
-    content.style.opacity = '';
-    setTimeout(() => content.classList.remove('tab-settle'), 360);
-  };
-  document.addEventListener('touchstart', (e) => {
-    g = null;
-    if (e.touches.length !== 1 || !$('#modal').hidden) return;
-    const i = tabIndex();
-    if (i < 0 || !(e.target instanceof Element) || e.target.closest(OWN_GESTURE) || sideways(e.target)) return;
-    const x = e.touches[0].clientX;
-    if (x < 20 || x > window.innerWidth - 20) return;
-    const content = $('#view-' + MAIN_TABS[i][0] + ' > .content');
-    if (content) g = { i, x, y: e.touches[0].clientY, t0: performance.now(), dx: 0, live: false, content };
-  }, { passive: true });
-  document.addEventListener('touchmove', (e) => {
-    if (!g) return;
-    const dx = e.touches[0].clientX - g.x, dy = e.touches[0].clientY - g.y;
-    if (!g.live) {
-      if (Math.abs(dx) < 12 && Math.abs(dy) < 12) return;
-      if (Math.abs(dx) < Math.abs(dy) * 1.5) { g = null; return; } // that's a scroll
-      g.live = true;
-      g.content.classList.remove('tab-settle');
-      g.content.classList.add('tab-drag');
-    }
-    g.dx = dx;
-    const atEnd = (dx > 0 && g.i === 0) || (dx < 0 && g.i === MAIN_TABS.length - 1);
-    const shown = atEnd ? Math.sign(dx) * Math.min(28, Math.abs(dx) * 0.15) : dx * 0.4;
-    g.content.style.transform = 'translateX(' + shown + 'px)';
-    g.content.style.opacity = String(1 - Math.min(0.3, Math.abs(shown) / 500));
-    if (e.cancelable) e.preventDefault();
-  }, { passive: false });
-  document.addEventListener('touchend', () => {
-    if (!g || !g.live) { g = null; return; }
-    const { dx, i, t0, content } = g;
-    g = null;
-    const fast = Math.abs(dx) > 50 && Math.abs(dx) / Math.max(1, performance.now() - t0) > 0.5;
-    const j = i + (dx < 0 ? 1 : -1);
-    if ((Math.abs(dx) < window.innerWidth * 0.25 && !fast) || j < 0 || j >= MAIN_TABS.length) { settle(content); return; }
-    content.classList.remove('tab-drag', 'tab-settle');
-    content.style.transform = '';
-    content.style.opacity = '';
-    tabEnter = dx < 0 ? 'right' : 'left';
-    location.hash = MAIN_TABS[j][1];
-  });
-  document.addEventListener('touchcancel', () => { if (g && g.live) settle(g.content); g = null; });
-})();
 
 /* ---------------- shared song tiles ---------------- */
 function comfortRow(song, compact) {
@@ -3524,41 +3443,33 @@ function openTempoSheet() {
   const unit = el('span', 'big-unit', 'BPM');
   const mid = el('div', 'big-mid');
   mid.append(input, unit);
-  // The dial: turn the loop of cord to set the tempo. The bead pulses on every beat, so you can check it against the recording.
-  const DMIN = 40, DMAX = 240, R = 84, C = 94;
-  const ns = 'http://www.w3.org/2000/svg';
-  const dial = document.createElementNS(ns, 'svg');
-  dial.setAttribute('class', 'dial');
-  dial.setAttribute('viewBox', '0 0 188 188');
+  // The cord: a straight length of cord under the number. Slide along it to set the tempo; it sits below
+  // the number so your thumb never covers what you're setting. The bead pulses on every beat, to check against the recording.
+  const DMIN = 40, DMAX = 240;
+  const dial = el('div', 'tempo-cord');
   dial.setAttribute('role', 'slider');
   dial.setAttribute('tabindex', '0');
-  dial.setAttribute('aria-label', 'Tempo dial. Turn it, or use the arrow keys.');
+  dial.setAttribute('aria-label', 'Tempo. Slide along the cord, or use the arrow keys.');
   dial.setAttribute('aria-valuemin', '30');
   dial.setAttribute('aria-valuemax', '300');
-  const angOf = (v) => 135 + (270 * (clamp(v, DMIN, DMAX) - DMIN)) / (DMAX - DMIN);
-  const pt = (a) => [C + R * Math.cos((a * Math.PI) / 180), C + R * Math.sin((a * Math.PI) / 180)];
-  const arc = (a0, a1) => { const [x0, y0] = pt(a0), [x1, y1] = pt(a1); return 'M' + x0.toFixed(2) + ' ' + y0.toFixed(2) + ' A' + R + ' ' + R + ' 0 ' + (a1 - a0 > 180 ? 1 : 0) + ' 1 ' + x1.toFixed(2) + ' ' + y1.toFixed(2); };
-  dial.innerHTML = '<path class="d-track" d="' + arc(135, 405) + '"/><path class="d-fill"/><circle class="d-hit" cx="94" cy="94" r="84"/><circle class="d-bead" r="11"/>';
-  const fillP = dial.querySelector('.d-fill'), beadC = dial.querySelector('.d-bead');
+  const track = el('div', 'tc-track');
+  const fillP = el('i', 'tc-fill');
+  const beadC = el('i', 'tc-bead');
+  track.append(fillP, beadC);
+  dial.append(el('span', 'tc-end', 'slower'), track, el('span', 'tc-end', 'faster'));
+  const pctOf = (v) => (100 * (clamp(v, DMIN, DMAX) - DMIN)) / (DMAX - DMIN);
   const drawDial = () => {
-    const a = angOf(bpm || 100);
-    fillP.setAttribute('d', bpm ? arc(135, Math.max(135.01, a)) : '');
-    const [x, y] = pt(a);
-    beadC.setAttribute('cx', x.toFixed(2));
-    beadC.setAttribute('cy', y.toFixed(2));
+    const pc = pctOf(bpm || 100);
+    fillP.style.width = (bpm ? pc : 0) + '%';
+    beadC.style.left = pc + '%';
     beadC.classList.toggle('none', !bpm);
     dial.setAttribute('aria-valuenow', String(bpm || 0));
     dial.setAttribute('aria-valuetext', bpm ? bpm + ' BPM' : 'No tempo yet');
   };
   let lastTick = 0;
   const fromPointer = (e) => {
-    const r = dial.getBoundingClientRect();
-    const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
-    let a = (Math.atan2(dy, dx) * 180) / Math.PI; // -180..180, 0 = right, 90 = down
-    if (a < 0) a += 360;
-    if (a < 45) a += 360; // the dial runs from 135deg (bottom left) round to 405deg (bottom right)
-    else if (a <= 135) a = a < 90 ? 405 : 135; // in the gap at the bottom: whichever end is nearer
-    const v = Math.round(DMIN + ((a - 135) / 270) * (DMAX - DMIN));
+    const r = track.getBoundingClientRect();
+    const v = Math.round(DMIN + clamp((e.clientX - r.left) / r.width, 0, 1) * (DMAX - DMIN));
     if (v === bpm) return;
     bpm = v;
     source = 'manual';
@@ -3568,9 +3479,6 @@ function openTempoSheet() {
   };
   let turning = false;
   dial.addEventListener('pointerdown', (e) => {
-    const r = dial.getBoundingClientRect();
-    const dist = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
-    if (dist < r.width * 0.3) return; // the middle is the number, which you can type into
     e.preventDefault();
     turning = true;
     dial.classList.add('turning');
@@ -3587,7 +3495,6 @@ function openTempoSheet() {
     e.preventDefault();
     nudge(d);
   });
-  mid.prepend(dial);
   big.append(down, mid, up);
   // the bead pulses on each beat of the tempo shown
   let beatRaf = 0, beatFrom = performance.now(), shownBpm = null;
@@ -3597,14 +3504,13 @@ function openTempoSheet() {
     if (bpm && !turning) {
       const phase = ((now - beatFrom) / (60000 / bpm)) % 1;
       const k = Math.exp(-phase * 7);
-      beadC.setAttribute('r', (11 + 5 * k).toFixed(2));
-      dial.style.setProperty('--beat', k.toFixed(3));
-    } else beadC.setAttribute('r', turning ? '15' : '11');
+      beadC.style.setProperty('--pulse', (1 + 0.45 * k).toFixed(3));
+    } else beadC.style.setProperty('--pulse', turning ? '1.35' : '1');
     beatRaf = requestAnimationFrame(beatLoop);
   };
   beatRaf = requestAnimationFrame(beatLoop);
   // with no tempo yet, tapping is the first thing you see
-  if (bpm) body.append(big, pad); else body.append(pad, big);
+  if (bpm) body.append(big, dial, pad); else body.append(pad, big, dial);
   const sync = () => { input.value = bpm || ''; drawDial(); };
   sync();
   const nudge = (d) => { bpm = clamp((bpm || 100) + d, 30, 300); source = 'manual'; sync(); };
@@ -3634,14 +3540,13 @@ function openTempoSheet() {
     seg.appendChild(b);
   }
   body.appendChild(seg);
-  body.appendChild(el('div', 'field-label', 'Key'));
-  const keyRow = el('div', 'row gap key-row');
+  const keyRow = el('label', 'key-row');
   const keyIn = el('input', 'input key-input');
-  Object.assign(keyIn, { value: song.key || '', placeholder: 'e.g. G', maxLength: 12, autocomplete: 'off', spellcheck: false });
+  Object.assign(keyIn, { value: song.key || '', placeholder: 'G, F#m, Bb', maxLength: 12, autocomplete: 'off', spellcheck: false });
   keyIn.setAttribute('autocapitalize', 'characters');
   keyIn.setAttribute('aria-label', 'Song key');
   keyIn.addEventListener('blur', () => { keyIn.value = normKey(keyIn.value); });
-  keyRow.append(keyIn, el('span', 'muted small grow', 'Like G, F#m or Bb. Shown at the top while you play.'));
+  keyRow.append(el('span', 'field-label', 'Key'), keyIn);
   body.appendChild(keyRow);
   openModal('Tempo and key', body, [
     { label: 'Cancel' },

@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400..700&display=swap">
-  <link rel="stylesheet" href="style.css?v=1.9.0">
+  <link rel="stylesheet" href="style.css?v=1.10.0">
 </head>
 <body>
   <!-- Icon set (inline SVG, no emoji) -->
@@ -167,11 +167,9 @@
             <option value="5">5/4</option><option value="6">6/8</option><option value="7">7/8</option>
           </select>
         </div>
-        <div class="field-label key-label">Key</div>
-        <div class="row gap">
-          <input id="edit-key" class="input key-input" placeholder="e.g. G" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12" aria-label="Song key">
-          <span class="muted small grow">Type it in, like G, F#m or Bb. It sits at the top of the lyric sheet while you play.</span>
-        </div>
+        <label class="key-row"><span class="field-label">Key</span>
+          <input id="edit-key" class="input key-input" placeholder="G, F#m, Bb" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12">
+        </label>
       </div>
       <label>Lyrics
         <textarea id="edit-lyrics" class="input lyrics-input" spellcheck="false" placeholder="Paste lyrics here, one line per line.&#10;&#10;Optional chords go in square brackets before the word:&#10;[G]First line of my [D]song"></textarea>
@@ -242,8 +240,7 @@
     <div class="ambient" aria-hidden="true"><i class="glow g1"></i><i class="glow g2"></i><i class="glow g3"></i><i class="pulse"></i></div>
     <header class="bar player-bar">
       <button class="icon-btn" id="p-back" aria-label="Back"><svg><use href="#i-back"/></svg></button>
-      <div class="titles"><div id="p-title" class="p-title"></div><div id="p-artist" class="muted small"></div></div>
-      <button type="button" class="key-chip" id="p-key" hidden><small>Key</small><b id="p-key-val"></b></button>
+      <div class="titles"><div id="p-title" class="p-title"></div><div class="p-sub muted small"><span id="p-artist"></span><button type="button" class="p-key" id="p-key" hidden>Key <b id="p-key-val"></b></button></div></div>
       <button class="icon-btn" id="p-edit" aria-label="Edit song"><svg><use href="#i-edit"/></svg></button>
     </header>
     <div id="p-video" class="video-card" hidden>
@@ -341,6 +338,6 @@
       }, 1500);
     });
   </script>
-  <script src="app.js?v=1.9.0"></script>
+  <script src="app.js?v=1.10.0"></script>
 </body>
 </html>
