@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400..700&display=swap">
-  <link rel="stylesheet" href="style.css?v=1.10.0">
+  <link rel="stylesheet" href="style.css?v=1.11.0">
 </head>
 <body>
   <!-- Icon set (inline SVG, no emoji) -->
@@ -172,7 +172,7 @@
         <label class="key-row"><span class="field-label">Key</span>
           <input id="edit-key" class="input key-input" placeholder="G, F#m, Bb" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12">
         </label>
-        <button type="button" class="setup-edit" id="edit-setup"><span class="field-label">Capo and tuning</span><b id="edit-setup-val">Standard, no capo</b><svg><use href="#i-chevron"/></svg></button>
+        <button type="button" class="setup-edit" id="edit-setup"><span class="field-label">Capo and tuning</span><b id="edit-setup-val">Standard tuning</b><svg><use href="#i-chevron"/></svg></button>
       </div>
       <label>Lyrics
         <textarea id="edit-lyrics" class="input lyrics-input" spellcheck="false" placeholder="Paste lyrics here, one line per line.&#10;&#10;Optional chords go in square brackets before the word:&#10;[G]First line of my [D]song"></textarea>
@@ -341,6 +341,6 @@
       }, 1500);
     });
   </script>
-  <script src="app.js?v=1.10.0"></script>
+  <script src="app.js?v=1.11.0"></script>
 </body>
 </html>

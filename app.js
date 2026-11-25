@@ -4,7 +4,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.10.0';
+const APP_VERSION = '1.11.0';
 const LRCLIB = 'https://lrclib.net/api';
 const ITUNES = 'https://itunes.apple.com/search';
 const DEEZER = 'https://api.deezer.com';
@@ -1838,7 +1838,7 @@ function openEditor(id) {
 const editTap = makeTapper((n) => { $('#edit-bpm').value = n; editDirty = true; $('#edit-tap').textContent = n + ' BPM · keep tapping'; }, (left) => { $('#edit-tap').textContent = 'Keep going… ' + left + ' more'; });
 $('#edit-tap').onpointerdown = (e) => { e.preventDefault(); editTap(); };
 function paintEditSetup() {
-  $('#edit-setup-val').textContent = setupLabel(editing) || 'Standard, no capo';
+  $('#edit-setup-val').textContent = (editing.tuning ? '' : (capoOf(editing) ? 'Capo ' + capoOf(editing) + ' · ' : '') + 'Standard tuning') || setupLabel(editing);
 }
 $('#edit-setup').onclick = () => {
   if (editing) openSetupSheet(editing, (c, t) => { applySetup(editing, c, t); editDirty = true; paintEditSetup(); });
@@ -2479,8 +2479,8 @@ const player = {
     const lastSung = sung.length ? sung[sung.length - 1].time : null;
     this.outroAt = lastSung != null && tl.end - lastSung > 12 ? lastSung + 5 : null;
   },
-  /* Capo and tuning sit quietly at the very top of the lyrics and scroll away with them. Nothing
-   * shows for standard tuning with no capo. Tap it to change either. */
+  /* Capo and tuning sit quietly at the very top of the lyrics and scroll away with them. The line
+   * always shows, "Standard tuning" included. Tap it to change either. */
   paintSetup(quiet) {
     const box = $('#p-lyrics');
     if (!box) return;
@@ -2488,16 +2488,15 @@ const player = {
     const s = this.song;
     const capo = capoOf(s);
     const tun = s && s.tuning;
-    if (!capo && !tun) { if (n) { n.remove(); if (!quiet) this.layout(); } return; }
+    if (!s) { if (n) n.remove(); return; }
     if (!n) { n = el('button', 'setup-line'); n.type = 'button'; box.insertBefore(n, box.firstChild); }
     n.innerHTML = '';
     if (capo) n.appendChild(el('b', null, 'Capo ' + capo));
-    if (tun) {
-      n.appendChild(el('b', null, tun));
-      const nt = tuningNotes(tun);
-      if (nt) n.appendChild(el('span', 'sl-notes', nt));
-    }
-    n.setAttribute('aria-label', setupLabel(s, true) + '. Change capo and tuning');
+    // standard is spelled out too, so a missing line never has to mean "standard"
+    n.appendChild(el('b', null, tun || 'Standard tuning'));
+    const nt = tun && tuningNotes(tun);
+    if (nt) n.appendChild(el('span', 'sl-notes', nt));
+    n.setAttribute('aria-label', (setupLabel(s, true) || 'Standard tuning, no capo') + (capo && !tun ? ', standard tuning' : '') + '. Change capo and tuning');
     if (!quiet) this.layout();
   },
   /* The song starts at the top of the screen (no empty space above it). Padding below lets the last line reach the anchor. */
