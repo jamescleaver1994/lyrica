@@ -684,8 +684,17 @@ function findGaps(tl, song, synced) {
 /* ---------------- router ---------------- */
 const views = ['library', 'folder', 'search', 'practice', 'edit', 'settings', 'player'];
 const TAB_OF = { library: 'library', folder: 'library', search: 'search', practice: 'practice', settings: 'settings' };
+let tabEnter = null; // 'left' or 'right' when the next screen should slide in from that side
 function show(name) {
   for (const v of views) $('#view-' + v).hidden = v !== name;
+  if (tabEnter && TAB_OF[name]) {
+    const view = $('#view-' + name), cls = 'tab-in-' + tabEnter;
+    view.classList.remove('tab-in-left', 'tab-in-right');
+    void view.offsetWidth;
+    view.classList.add(cls);
+    setTimeout(() => view.classList.remove(cls), 420);
+  }
+  tabEnter = null;
   document.documentElement.classList.toggle('in-player', name === 'player');
   $('#tabbar').classList.toggle('hide', !TAB_OF[name]);
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === TAB_OF[name]));
@@ -710,6 +719,78 @@ function route() {
   else openLibrary();
 }
 window.addEventListener('hashchange', route);
+
+/* Swipe left or right between the four main screens, as well as tapping the tab bar.
+ * Only a clearly sideways swipe counts, so scrolling is untouched. It never starts on anything that
+ * has its own sideways gesture (practice deck cards, sliders, switches, pickers, rows that scroll
+ * sideways, the reorder beads) or at the very edge of the screen, where the phone's back gesture lives.
+ * The screen follows your finger a little, and stretches but won't go past the first or last tab. */
+const MAIN_TABS = [['library', '#/'], ['search', '#/search'], ['practice', '#/practice'], ['settings', '#/settings']];
+const tabIndex = () => MAIN_TABS.findIndex(([v]) => !$('#view-' + v).hidden);
+document.addEventListener('click', (e) => {
+  const tab = e.target.closest('#tabbar .tab');
+  if (!tab) return;
+  const from = tabIndex(), to = MAIN_TABS.findIndex(([v]) => v === TAB_OF[tab.dataset.tab]);
+  if (from >= 0 && to >= 0 && from !== to) tabEnter = to > from ? 'right' : 'left';
+}, true);
+(function tabSwipe() {
+  let g = null;
+  const OWN_GESTURE = 'input, textarea, select, [contenteditable], [role=slider], .segmented, .deck-list > li, .bead, .alpha-rail, .cord, .no-swipe';
+  const sideways = (t) => {
+    for (let n = t; n && n !== document.body; n = n.parentElement) {
+      if (n.scrollWidth > n.clientWidth + 2 && /auto|scroll/.test(getComputedStyle(n).overflowX)) return true;
+    }
+    return false;
+  };
+  const settle = (content) => {
+    content.classList.remove('tab-drag');
+    content.classList.add('tab-settle');
+    content.style.transform = '';
+    content.style.opacity = '';
+    setTimeout(() => content.classList.remove('tab-settle'), 360);
+  };
+  document.addEventListener('touchstart', (e) => {
+    g = null;
+    if (e.touches.length !== 1 || !$('#modal').hidden) return;
+    const i = tabIndex();
+    if (i < 0 || !(e.target instanceof Element) || e.target.closest(OWN_GESTURE) || sideways(e.target)) return;
+    const x = e.touches[0].clientX;
+    if (x < 20 || x > window.innerWidth - 20) return;
+    const content = $('#view-' + MAIN_TABS[i][0] + ' > .content');
+    if (content) g = { i, x, y: e.touches[0].clientY, t0: performance.now(), dx: 0, live: false, content };
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (!g) return;
+    const dx = e.touches[0].clientX - g.x, dy = e.touches[0].clientY - g.y;
+    if (!g.live) {
+      if (Math.abs(dx) < 12 && Math.abs(dy) < 12) return;
+      if (Math.abs(dx) < Math.abs(dy) * 1.5) { g = null; return; } // that's a scroll
+      g.live = true;
+      g.content.classList.remove('tab-settle');
+      g.content.classList.add('tab-drag');
+    }
+    g.dx = dx;
+    const atEnd = (dx > 0 && g.i === 0) || (dx < 0 && g.i === MAIN_TABS.length - 1);
+    const shown = atEnd ? Math.sign(dx) * Math.min(28, Math.abs(dx) * 0.15) : dx * 0.4;
+    g.content.style.transform = 'translateX(' + shown + 'px)';
+    g.content.style.opacity = String(1 - Math.min(0.3, Math.abs(shown) / 500));
+    if (e.cancelable) e.preventDefault();
+  }, { passive: false });
+  document.addEventListener('touchend', () => {
+    if (!g || !g.live) { g = null; return; }
+    const { dx, i, t0, content } = g;
+    g = null;
+    const fast = Math.abs(dx) > 50 && Math.abs(dx) / Math.max(1, performance.now() - t0) > 0.5;
+    const j = i + (dx < 0 ? 1 : -1);
+    if ((Math.abs(dx) < window.innerWidth * 0.25 && !fast) || j < 0 || j >= MAIN_TABS.length) { settle(content); return; }
+    content.classList.remove('tab-drag', 'tab-settle');
+    content.style.transform = '';
+    content.style.opacity = '';
+    tabEnter = dx < 0 ? 'right' : 'left';
+    location.hash = MAIN_TABS[j][1];
+  });
+  document.addEventListener('touchcancel', () => { if (g && g.live) settle(g.content); g = null; });
+})();
 
 /* ---------------- shared song tiles ---------------- */
 function comfortRow(song, compact) {
@@ -1667,7 +1748,7 @@ function openSongSheet(song, folderId) {
   add.onclick = () => openFolderPicker(song);
   fo.appendChild(add);
   body.appendChild(fo);
-  const stats = [song.plays ? song.plays + (song.plays === 1 ? ' play' : ' plays') : 'Not played yet', song.bpm ? song.bpm + ' BPM' : ''].filter(Boolean).join(' · ');
+  const stats = [song.plays ? song.plays + (song.plays === 1 ? ' play' : ' plays') : 'Not played yet', song.bpm ? song.bpm + ' BPM' : '', song.key ? 'Key of ' + song.key : ''].filter(Boolean).join(' · ');
   body.appendChild(el('div', 'muted small', stats));
   openModal(song.title || 'Song', body, [
     { label: 'Edit song', run: () => (location.hash = '#/edit/' + song.id) },
@@ -1781,6 +1862,7 @@ function openEditor(id) {
   $('#edit-duration').value = editing.duration ? fmtTime(editing.duration) : '';
   $('#edit-bpm').value = editing.bpm || '';
   $('#edit-bpb').value = String(editing.beatsPerBar || 4);
+  $('#edit-key').value = editing.key || '';
   $('#edit-bpm-note').textContent = editing.bpm && editing.bpmSource === 'deezer' ? 'Suggested from online data. Tap along to check it.' : 'Tap along with the recording, or type it in.';
   $('#edit-tap').textContent = 'Tap on the beat';
   $('#edit-lyrics').value = editing.lyrics || '';
@@ -1789,7 +1871,8 @@ function openEditor(id) {
 }
 const editTap = makeTapper((n) => { $('#edit-bpm').value = n; editDirty = true; $('#edit-tap').textContent = n + ' BPM · keep tapping'; }, (left) => { $('#edit-tap').textContent = 'Keep going… ' + left + ' more'; });
 $('#edit-tap').onpointerdown = (e) => { e.preventDefault(); editTap(); };
-for (const id of ['#edit-title', '#edit-artist', '#edit-duration', '#edit-bpm', '#edit-bpb', '#edit-lyrics']) $(id).addEventListener('input', () => (editDirty = true));
+$('#edit-key').addEventListener('blur', (e) => { e.target.value = normKey(e.target.value); });
+for (const id of ['#edit-title', '#edit-artist', '#edit-duration', '#edit-bpm', '#edit-bpb', '#edit-key', '#edit-lyrics']) $(id).addEventListener('input', () => (editDirty = true));
 $('#edit-back').onclick = () => {
   if (editDirty && !confirm('Discard your changes?')) return;
   editDirty = false;
@@ -1806,6 +1889,8 @@ $('#edit-save').onclick = () => {
   if (bpm >= 30 && bpm <= 300) { if (bpm !== before?.bpm) editing.bpmSource = 'manual'; editing.bpm = bpm; }
   else if (!$('#edit-bpm').value.trim() && before && before.bpm && before.bpmSource !== 'deezer') { editing.bpm = undefined; }
   editing.beatsPerBar = +$('#edit-bpb').value || 4;
+  const key = normKey($('#edit-key').value);
+  if (key) editing.key = key; else delete editing.key;
   editing.lyrics = lyrics;
   if (!before || before.title !== editing.title || before.artist !== editing.artist) {
     delete editing.art; // look the cover (and tempo, unless set by hand) up again
@@ -2588,6 +2673,9 @@ const player = {
     const has = !!this.song.bpm;
     const pct = Math.round((this.song.speed || 1) * 100);
     const suggested = has && this.song.bpmSource === 'deezer';
+    const kc = $('#p-key');
+    kc.hidden = !this.song.key;
+    if (this.song.key) { $('#p-key-val').textContent = this.song.key; kc.setAttribute('aria-label', 'Key of ' + this.song.key + '. Change tempo and key'); }
     $('#p-tempo-btn').classList.toggle('empty', !has);
     $('#p-tempo-btn').classList.toggle('suggested', suggested);
     $('#p-tempo-num').textContent = has ? String(this.playingBpm()) : 'Tap';
@@ -2753,6 +2841,23 @@ const player = {
     if (fn && card.isConnected && card.querySelector('.end-tile')) fn();
     // the last of today's five: celebrate now it's really done
     if (this.fromDeck && !this.nextSong()) { const pr = deckProgress(); if (pr.roundDone >= DECK_SIZE && deck.celebrated <= deck.round) { deck.celebrated = deck.round + 1; saveDeck(); toast('Five songs practised. Nicely done.'); } }
+  },
+  /* Where the sheet rests once the end card is in: the last few sung lines stay at the top of the screen
+   * (three when there's room, otherwise two), so a singer still finishing isn't pushed off the words. */
+  endScrollTop(box) {
+    const card = this.endCard;
+    const cardTop = card.offsetTop - 28;
+    const sung = [];
+    this.tl.lines.forEach((l, i) => { if (l.kind === 'lyric' && l.hasWords && this.nodes[i]) sung.push(this.nodes[i]); });
+    if (!sung.length) return cardTop;
+    const room = box.clientHeight - 12;
+    const need = Math.min(card.offsetHeight, 230); // the card's heading and its way on stay in view too
+    for (const n of [3, 2]) {
+      const node = sung[Math.max(0, sung.length - n)];
+      const top = node.offsetTop - 14;
+      if (card.offsetTop + need - top <= room || n === 2) return Math.min(top, cardTop);
+    }
+    return cardTop;
   },
   stopEndTimer() {
     if (this.endTimer) { clearTimeout(this.endTimer); this.endTimer = 0; }
@@ -3036,7 +3141,7 @@ const player = {
       }
     }
     // once the song has ended, glide on to the end card
-    if (this.endCard) target = this.endCard.offsetTop - 28 + box.clientHeight * ANCHOR;
+    if (this.endCard) target = this.endScrollTop(box) + box.clientHeight * ANCHOR;
     target = Math.max(0, target - box.clientHeight * ANCHOR);
     const manual = this.touching || now < this.manualUntil;
     const away = Math.abs(target - box.scrollTop) > 60;
@@ -3313,6 +3418,7 @@ function toggleMetronome() {
 }
 $('#p-metro').onclick = toggleMetronome;
 $('#p-tempo-btn').onclick = () => openTempoSheet();
+$('#p-key').onclick = () => openTempoSheet();
 
 /* Tap tempo: average the gaps between the last few taps. */
 function makeTapper(onBpm, onStep) {
@@ -3332,6 +3438,17 @@ const SIGS = { 2: '2/4', 3: '3/4', 4: '4/4', 5: '5/4', 6: '6/8', 7: '7/8' };
 function timeSig(bpb) { return SIGS[bpb || 4] || (bpb + '/4'); }
 
 /* A tempo found online is sometimes counted at double or half the speed people feel it. */
+/* A song's key, typed in by hand (there's no lookup). Common spellings are tidied up, so "f#m",
+ * "bb" and "a minor" become F#m, Bb and Am; anything else (like "D dorian") is kept as typed. */
+function normKey(raw) {
+  const v = String(raw || '').trim().replace(/\s+/g, ' ');
+  if (!v) return '';
+  const m = v.match(/^([a-g])\s*(#|♯|b|♭|sharp|flat)?\s*(m|min|minor|maj|major|-)?$/i);
+  if (!m) return v.slice(0, 12);
+  const acc = !m[2] ? '' : /^(#|♯|sharp)$/i.test(m[2]) ? '#' : 'b';
+  const minor = m[3] && /^(m|min|minor|-)$/i.test(m[3]) && m[3] !== 'M' ? 'm' : '';
+  return m[1].toUpperCase() + acc + minor;
+}
 function tempoAlt(bpm) {
   if (bpm >= 150) return Math.round(bpm / 2);
   if (bpm <= 75) return bpm * 2;
@@ -3517,10 +3634,21 @@ function openTempoSheet() {
     seg.appendChild(b);
   }
   body.appendChild(seg);
-  openModal('Song tempo', body, [
+  body.appendChild(el('div', 'field-label', 'Key'));
+  const keyRow = el('div', 'row gap key-row');
+  const keyIn = el('input', 'input key-input');
+  Object.assign(keyIn, { value: song.key || '', placeholder: 'e.g. G', maxLength: 12, autocomplete: 'off', spellcheck: false });
+  keyIn.setAttribute('autocapitalize', 'characters');
+  keyIn.setAttribute('aria-label', 'Song key');
+  keyIn.addEventListener('blur', () => { keyIn.value = normKey(keyIn.value); });
+  keyRow.append(keyIn, el('span', 'muted small grow', 'Like G, F#m or Bb. Shown at the top while you play.'));
+  body.appendChild(keyRow);
+  openModal('Tempo and key', body, [
     { label: 'Cancel' },
     { label: 'Save', primary: true, run: () => {
       song.beatsPerBar = bpb;
+      const key = normKey(keyIn.value);
+      if (key) song.key = key; else delete song.key;
       if (bpm) player.setBpm(bpm, bpm === song.bpm && source === 'manual' ? (song.bpmSource || 'manual') : source);
       else { upsertSong(song); player.updateUi(); }
       if (bpm && !settings.metroOn) toast('Tempo saved. The speaker button turns the click on.');

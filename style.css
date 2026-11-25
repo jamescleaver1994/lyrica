@@ -1239,3 +1239,28 @@ ul.threaded > li.hint-nudge .bead { background: var(--accent); }
 .ls-more { margin-left: 6px; font: 700 13px var(--font-display); color: var(--muted); }
 .ls-n { min-width: 22px; text-align: right; font: 800 17px var(--font-display); font-variant-numeric: tabular-nums; }
 .ls-songs { margin: 0 0 6px; }
+
+/* ---------- song key (1.10.0) ---------- */
+.key-chip {
+  flex: none; display: inline-flex; align-items: baseline; gap: 5px; height: 40px; padding: 0 13px;
+  border-radius: 999px; border: 2px solid rgba(127, 227, 214, .28); background: #183139; color: var(--chord);
+  cursor: pointer; transition: transform .18s var(--spring), background-color .2s; line-height: 36px;
+}
+.key-chip:active { transform: scale(.94); background: var(--surface-strong); }
+.key-chip small { font: 700 10px var(--font-display); color: var(--muted); letter-spacing: .06em; text-transform: uppercase; }
+.key-chip b { font: 800 18px var(--font-display); letter-spacing: -.01em; max-width: 7.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.key-input { width: 96px; flex: none; font: 700 20px var(--font-display); text-align: center; }
+.key-label { margin-top: 6px; }
+.key-row { align-items: center; }
+
+/* ---------- swipe between the main screens (1.10.0) ---------- */
+.view.tabbed > .content.tab-drag { transition: none; will-change: transform; }
+.view.tabbed > .content.tab-settle { transition: transform .32s var(--spring), opacity .25s ease; }
+.view.tabbed.tab-in-left > .content { animation: tab-in-left .36s var(--unspool) both; }
+.view.tabbed.tab-in-right > .content { animation: tab-in-right .36s var(--unspool) both; }
+@keyframes tab-in-left { from { transform: translateX(-48px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes tab-in-right { from { transform: translateX(48px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .view.tabbed.tab-in-left > .content, .view.tabbed.tab-in-right > .content { animation: none; }
+  .view.tabbed > .content.tab-settle { transition: none; }
+}
