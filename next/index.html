@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Stanze (test build)</title>
+  <meta name="description" content="Autoscrolling lyrics and chords for playing along.">
+  <meta name="theme-color" content="#0a1215">
+  <link rel="manifest" href="../manifest.webmanifest">
+  <link rel="icon" href="../icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="../icons/icon-180.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400..700&display=swap">
+  <link rel="stylesheet" href="style.css?v=1.10.0-test">
+</head>
+<body>
+  <!-- Icon set (inline SVG, no emoji) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h9M19 8h1M4 16h1M11 16h9"/><circle cx="16" cy="8" r="2.6"/><circle cx="8" cy="16" r="2.6"/></g></symbol>
+      <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5.5v13l11-6.5z"/></g></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6v12M15 6v12"/></g></symbol>
+      <symbol id="i-restart" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 108-8 8 8 0 00-6 2.7"/><path d="M5 3v4h4"/></g></symbol>
+      <symbol id="i-minus" viewBox="0 0 24 24"><path d="M6 12h12" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 6v12M6 12h12" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><g fill="currentColor"><circle cx="5.5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="18.5" cy="12" r="1.8"/></g></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/></g></symbol>
+      <symbol id="i-text" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4.5" width="14" height="16.5" rx="4"/><path d="M9 10h6M9 14.5h4"/></g></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 012-2h4l2 2h7a2 2 0 012 2v7.5a2 2 0 01-2 2h-13a2 2 0 01-2-2z" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round"/></symbol>
+      <symbol id="i-note" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></g></symbol>
+      <symbol id="i-timer" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><circle cx="12" cy="13" r="7"/><path d="M12 13V9.5M10 3h4"/></g></symbol>
+      <symbol id="i-updown" viewBox="0 0 24 24"><path d="M8 8.5l4-4 4 4M8 15.5l4 4 4-4M12 5v14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-up" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-next" viewBox="0 0 24 24"><g fill="currentColor"><path d="M5 6.2v11.6a.8.8 0 001.2.7l8.6-5.8a.8.8 0 000-1.4L6.2 5.5A.8.8 0 005 6.2z"/><rect x="16.5" y="5.5" width="2.5" height="13" rx="1"/></g></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-library" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6h14M5 12h14M5 18h9"/></g></symbol>
+      <symbol id="i-practice" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13a8 8 0 0 0 14 5M20 11A8 8 0 0 0 6 6M6 2.5V6.5H10M18 21.5V17.5H14"/></g></symbol>
+      <symbol id="i-sort" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5v14M4 16l3 3 3-3M17 19V5M14 8l3-3 3 3"/></g></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-metronome" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 20L10 4h4l3 16z"/><path d="M12 15l5-7"/></g></symbol>
+      <symbol id="i-click" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5h3l4.5-4v13L7 14.5H4z"/><path d="M15 9a4 4 0 010 6M17.8 6.5a7.5 7.5 0 010 11"/></g></symbol>
+      <symbol id="i-flag" viewBox="0 0 24 24"><path d="M7 21V4M7 4h10l-2.5 4L17 12H7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-person" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1.2-3.6 4-5.5 7-5.5s5.8 1.9 7 5.5"/></g></symbol>
+    </defs>
+  </svg>
+
+  <div class="grain" aria-hidden="true"></div>
+
+  <!-- LIBRARY -->
+  <section id="view-library" class="view tabbed" hidden>
+    <header class="bar brand-bar">
+      <h1 class="tab-title wordmark" aria-label="Stanze library, test build">stanze <small class="muted small">test</small></h1>
+      <button class="icon-btn" data-go="#/edit/new" aria-label="Add your own lyrics"><svg><use href="#i-plus"/></svg></button>
+    </header>
+    <div class="content">
+      <div class="segmented" id="lib-views" role="tablist" aria-label="Library view">
+        <button type="button" data-view="songs" role="tab">Songs</button>
+        <button type="button" data-view="artists" role="tab">Artists</button>
+        <button type="button" data-view="folders" role="tab">Folders</button>
+      </div>
+      <div class="row gap lib-tools">
+        <input id="lib-filter" class="input grow" type="search" placeholder="Filter" autocomplete="off">
+        <button class="btn small sort-btn" id="lib-sort" type="button"><svg><use href="#i-sort"/></svg><span id="lib-sort-label">Recent</span></button>
+      </div>
+      <div id="lib-list" class="lib-list"></div>
+      <p id="lib-empty" class="empty" hidden></p>
+    </div>
+    <nav id="alpha-rail" class="alpha-rail" hidden aria-label="Jump to letter"></nav>
+  </section>
+
+  <!-- FOLDER -->
+  <section id="view-folder" class="view tabbed" hidden>
+    <header class="bar">
+      <button class="icon-btn" id="folder-back" aria-label="Back"><svg><use href="#i-back"/></svg></button>
+      <h1 id="folder-name"></h1>
+      <button class="btn small" id="folder-add" aria-label="Add songs"><svg><use href="#i-plus"/></svg>Add</button>
+      <button class="icon-btn" id="folder-menu" aria-label="Folder options"><svg><use href="#i-more"/></svg></button>
+    </header>
+    <div class="content">
+      <div class="folder-sub"><span class="muted small" id="folder-meta"></span><span class="drag-note" id="folder-drag-note" hidden><svg><use href="#i-updown"/></svg>Drag the numbers to reorder</span></div>
+      <ul id="folder-list" class="list"></ul>
+      <div id="folder-empty" class="empty folder-empty" hidden><p>Nothing on this cord yet.</p><button class="btn primary" id="folder-empty-add"><svg><use href="#i-plus"/></svg>Add songs</button></div>
+    </div>
+  </section>
+
+  <!-- FIND -->
+  <section id="view-search" class="view tabbed" hidden>
+    <header class="bar brand-bar"><h1 class="tab-title">Find</h1></header>
+    <div class="content">
+      <form id="search-form" class="stack">
+        <div class="search-field"><svg aria-hidden="true"><use href="#i-search"/></svg><input id="search-track" class="input" placeholder="Song title" autocomplete="off" required></div>
+        <input id="search-artist" class="input" placeholder="Artist (optional)" autocomplete="off">
+        <button class="btn primary" type="submit"><svg><use href="#i-search"/></svg>Search lyrics</button>
+      </form>
+      <p id="search-status" class="muted"></p>
+      <ul id="search-results" class="list results"></ul>
+      <div class="card-note">
+        <div class="grow"><b>Got your own lyrics or chords?</b><div class="muted small">Paste them in and Stanze will pace them for you.</div></div>
+        <button class="btn small" data-go="#/edit/new">Paste my own</button>
+      </div>
+      <p class="muted small">Lyrics come from LRCLIB, a free open lyrics library. Synced songs scroll in time with the original recording.</p>
+    </div>
+  </section>
+
+  <!-- PRACTICE -->
+  <section id="view-practice" class="view tabbed" hidden>
+    <header class="bar brand-bar"><h1 class="tab-title">Practice</h1></header>
+    <div class="content">
+      <section class="deck">
+        <div class="deck-head">
+          <div class="eyebrow">Today's practice</div>
+          <h2>Five songs, picked for you</h2>
+          <p class="deck-lede">Chosen from how you've rated your songs. Stanze keeps an ear on every rating and adapts as you go: a song that feels rustier comes back sooner, and one that's settling in gives its place to something that needs you more.</p>
+          <div class="deck-progress"><div class="deck-strip" id="deck-strip" aria-hidden="true"></div><span id="deck-count"></span></div>
+        </div>
+        <ul id="deck-list" class="list deck-list"></ul>
+        <p id="deck-swipe-note" class="muted small deck-note" hidden>Start with any song. Not feeling one today? Swipe it away and it rests for a few days.</p>
+        <div id="deck-finished" class="deck-finished" hidden>
+          <h3>That's today's five</h3>
+          <p>Thanks for making time to practise. Tomorrow's songs will build on how these felt.</p>
+          <button class="btn primary" id="deck-more" type="button"><svg><use href="#i-practice"/></svg>Practise five more</button>
+        </div>
+        <p id="deck-empty" class="empty" hidden>Nothing to practise yet. Rate a few songs from their options menu and Stanze will start picking for you.</p>
+        <div id="deck-done-wrap" class="deck-done-wrap" hidden>
+          <div class="field-label">Done today</div>
+          <div id="deck-done" class="deck-done"></div>
+        </div>
+      </section>
+      <section>
+        <div class="lib-shape-head">
+          <h2>Where your songs are</h2>
+          <p>From first read to second nature. Tap a stage to see its songs.</p>
+        </div>
+        <div id="comfort-summary" class="lib-shape"></div>
+      </section>
+    </div>
+  </section>
+
+  <!-- EDIT -->
+  <section id="view-edit" class="view" hidden>
+    <header class="bar">
+      <button class="icon-btn" id="edit-back" aria-label="Back"><svg><use href="#i-back"/></svg></button>
+      <h1 id="edit-heading">Song</h1>
+      <button class="btn primary small" id="edit-save">Save</button>
+    </header>
+    <div class="content stack">
+      <label>Title<input id="edit-title" class="input" autocomplete="off"></label>
+      <label>Artist<input id="edit-artist" class="input" autocomplete="off"></label>
+      <label>Song length <span class="muted">(minutes:seconds, paces songs without timings)</span>
+        <input id="edit-duration" class="input" placeholder="e.g. 3:45" inputmode="numeric" autocomplete="off">
+      </label>
+      <div class="tempo-edit">
+        <div class="field-label">Tempo</div>
+        <div class="row gap">
+          <input id="edit-bpm" class="input bpm-input" placeholder="BPM" inputmode="numeric" autocomplete="off" aria-label="Tempo in BPM">
+          <button type="button" class="btn grow" id="edit-tap">Tap on the beat</button>
+        </div>
+        <div class="row gap">
+          <span class="muted small grow" id="edit-bpm-note">Type it in or tap along with the recording.</span>
+          <select id="edit-bpb" class="input sig-select" aria-label="Time signature">
+            <option value="2">2/4</option><option value="3">3/4</option><option value="4" selected>4/4</option>
+            <option value="5">5/4</option><option value="6">6/8</option><option value="7">7/8</option>
+          </select>
+        </div>
+        <div class="field-label key-label">Key</div>
+        <div class="row gap">
+          <input id="edit-key" class="input key-input" placeholder="e.g. G" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12" aria-label="Song key">
+          <span class="muted small grow">Type it in, like G, F#m or Bb. It sits at the top of the lyric sheet while you play.</span>
+        </div>
+      </div>
+      <label>Lyrics
+        <textarea id="edit-lyrics" class="input lyrics-input" spellcheck="false" placeholder="Paste lyrics here, one line per line.&#10;&#10;Optional chords go in square brackets before the word:&#10;[G]First line of my [D]song"></textarea>
+      </label>
+      <details class="help">
+        <summary>Tips: chords and timing</summary>
+        <p>Put chords in square brackets just before the word they land on, like <code>[Am]Hello [F]there</code>. You can also paste a chord sheet with chords on the line above the words.</p>
+        <p>Lines starting with a time like <code>[01:23.45]</code> are synced and scroll exactly on time. You can make these yourself with <b>Tap to time</b> in the player.</p>
+      </details>
+    </div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section id="view-settings" class="view tabbed" hidden>
+    <header class="bar">
+      <h1 class="tab-title">Settings</h1>
+    </header>
+    <div class="content stack settings">
+      <section class="set-group">
+        <div class="field-label">Lyrics</div>
+        <label class="setting slider"><span>Lyric size</span>
+          <span class="row gap"><input id="set-font" type="range" min="18" max="56" step="2"><output id="set-font-out"></output></span>
+        </label>
+        <label class="setting check"><span>Show chords</span><input id="set-chords" type="checkbox" role="switch"></label>
+        <label class="setting check"><span>Moving background</span><input id="set-motion" type="checkbox" role="switch"></label>
+        <div class="setting picker"><span id="set-resume-label">Carry on after I scroll</span>
+          <select id="set-resume" class="input" aria-labelledby="set-resume-label" data-seg="2 sec|3 sec|5 sec|8 sec">
+            <option value="2">2 seconds</option><option value="3">3 seconds</option>
+            <option value="5">5 seconds</option><option value="8">8 seconds</option>
+          </select>
+        </div>
+      </section>
+      <section class="set-group">
+        <div class="field-label">Count-in</div>
+        <div class="setting picker"><span id="set-countin-label">Before starting</span>
+          <select id="set-countin" class="input" aria-labelledby="set-countin-label" data-seg="Off|1 bar|2 bars|3 sec|5 sec">
+            <option value="0">None</option>
+            <option value="1bar">1 bar, on the beat</option><option value="2bar">2 bars, on the beat</option>
+            <option value="3">3 seconds</option><option value="5">5 seconds</option>
+          </select>
+          <span class="muted small">Bars follow the song's tempo. Songs without one count 3 seconds.</span>
+        </div>
+        <label class="setting check"><span>Click during count-in</span><input id="set-click" type="checkbox" role="switch"></label>
+        <label class="setting check"><span>Pause at instrumentals</span><input id="set-gaps" type="checkbox" role="switch"></label>
+      </section>
+      <section class="set-group">
+        <div class="field-label">Phone and online</div>
+        <label class="setting check"><span>Keep screen awake</span><input id="set-wake" type="checkbox" role="switch"></label>
+        <label class="setting check"><span>Look up tempo online</span><input id="set-bpm" type="checkbox" role="switch"></label>
+        <label class="setting check"><span>Look up cover art</span><input id="set-covers" type="checkbox" role="switch"></label>
+        <label class="setting check disabled"><span>Follow me with the mic <small class="muted">Coming later</small></span><input type="checkbox" role="switch" disabled></label>
+      </section>
+      <section class="set-group">
+      <div class="field-label">Backup</div>
+      <p class="muted small">Your songs live on this phone only. Save a backup file now and then so you never lose them.</p>
+      <div class="row gap">
+        <button class="btn grow" id="backup-export">Save backup</button>
+        <button class="btn grow" id="backup-import">Restore backup</button>
+        <input type="file" id="backup-file" accept=".json,application/json" hidden>
+      </div>
+      </section>
+      <p class="muted small" id="app-version"></p>
+    </div>
+  </section>
+
+  <!-- PLAYER -->
+  <section id="view-player" class="player" hidden>
+    <div class="ambient" aria-hidden="true"><i class="glow g1"></i><i class="glow g2"></i><i class="glow g3"></i><i class="pulse"></i></div>
+    <header class="bar player-bar">
+      <button class="icon-btn" id="p-back" aria-label="Back"><svg><use href="#i-back"/></svg></button>
+      <div class="titles"><div id="p-title" class="p-title"></div><div id="p-artist" class="muted small"></div></div>
+      <button type="button" class="key-chip" id="p-key" hidden><small>Key</small><b id="p-key-val"></b></button>
+      <button class="icon-btn" id="p-edit" aria-label="Edit song"><svg><use href="#i-edit"/></svg></button>
+    </header>
+    <div id="p-video" class="video-card" hidden>
+      <div id="p-video-wrap" class="vc-wrap">
+        <div id="p-video-frame" class="vc-frame"></div>
+      </div>
+      <p id="p-video-msg" class="vc-msg small" hidden></p>
+      <div class="vc-bar">
+        <div id="p-video-switch" class="segmented vc-switch" role="group" aria-label="Play along with"></div>
+        <button type="button" class="icon-btn" id="p-video-more" aria-label="Track options"><svg><use href="#i-more"/></svg></button>
+      </div>
+    </div>
+    <div class="lyrics-wrap">
+      <div id="p-lyrics" class="p-lyrics" tabindex="0"></div>
+      <button type="button" id="p-backnow" class="backnow" hidden><svg><use href="#i-up"/></svg><span id="p-backnow-text">Back to now</span></button>
+    </div>
+    <div id="p-timing" class="timing-panel" hidden>
+      <p class="small">Tap <b>Next line</b> as you start singing each line.</p>
+      <div class="row gap">
+        <button class="btn grow" id="t-cancel">Cancel</button>
+        <button class="btn primary grow big" id="t-next">Next line</button>
+      </div>
+    </div>
+    <footer class="controls">
+      <div class="cordbox" id="p-cordbox">
+        <div class="clues" id="p-clues"></div>
+        <svg id="p-cord" class="cord" role="slider" tabindex="0" aria-label="Song position. Drag to move through the song." aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <defs><clipPath id="p-cord-clip"><rect id="p-cord-cliprect" x="0" y="-20" width="0" height="100"/></clipPath></defs>
+          <g id="p-tethers"></g>
+          <path class="rest" id="p-cord-rest"/>
+          <path class="played" id="p-cord-played" clip-path="url(#p-cord-clip)"/>
+          <g id="p-knots"></g>
+          <circle class="halo" id="p-cord-halo" r="22"/>
+          <circle class="bead" id="p-cord-bead" r="9"/>
+        </svg>
+        <div class="cord-bubble" id="p-cord-bubble" hidden><b id="p-bub-time"></b><span id="p-bub-text"></span></div>
+      </div>
+      <div class="scrub">
+        <span id="p-time" class="time">0:00</span>
+        <span id="p-total" class="time">0:00</span>
+      </div>
+      <div class="dock">
+        <div class="dock-side">
+          <button type="button" class="round-btn" id="p-restart" aria-label="Start again"><svg><use href="#i-restart"/></svg></button>
+          <button type="button" class="tempo-btn" id="p-tempo-btn" aria-label="Song tempo">
+            <svg class="beat-ring" id="p-beatring" viewBox="0 0 64 64" aria-hidden="true"></svg>
+            <span class="tp-text"><b id="p-tempo-num">Tap</b><small id="p-tempo-sub">tempo</small></span>
+          </button>
+        </div>
+        <div class="playwrap" id="p-playwrap">
+          <svg class="count-ring" id="p-ring" viewBox="0 0 92 92" aria-hidden="true"></svg>
+          <button class="ctl play" id="p-play" aria-label="Play"><svg><use href="#i-play"/></svg></button>
+          <span class="ci-num" id="p-cinum" aria-hidden="true"></span>
+        </div>
+        <div class="dock-side end">
+          <button type="button" class="round-btn" id="p-metro" aria-pressed="false" aria-label="Metronome click"><svg><use href="#i-click"/></svg></button>
+          <button type="button" class="round-btn" id="p-more" aria-label="Playback options"><svg><use href="#i-more"/></svg></button>
+        </div>
+      </div>
+      <button type="button" id="p-speed-note" class="speed-note" hidden></button>
+    </footer>
+  </section>
+
+  <nav id="tabbar" class="tabbar" aria-label="Main">
+    <a class="tab" data-tab="library" href="#/"><span class="tab-ind"><svg><use href="#i-library"/></svg></span><span class="tab-label">Library</span></a>
+    <a class="tab" data-tab="search" href="#/search"><span class="tab-ind"><svg><use href="#i-search"/></svg></span><span class="tab-label">Find</span></a>
+    <a class="tab" data-tab="practice" href="#/practice"><span class="tab-ind"><svg><use href="#i-practice"/></svg></span><span class="tab-label">Practice</span></a>
+    <a class="tab" data-tab="settings" href="#/settings"><span class="tab-ind"><svg><use href="#i-settings"/></svg></span><span class="tab-label">Settings</span></a>
+  </nav>
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <header class="sheet-head"><h1 id="modal-title"></h1><button class="icon-btn" id="modal-close" aria-label="Close"><svg><use href="#i-close"/></svg></button></header>
+      <div id="modal-body" class="modal-body"></div>
+      <div class="row gap modal-actions" id="modal-actions"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="app.js?v=1.10.0-test"></script>
+</body>
+</html>
