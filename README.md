@@ -14,3 +14,6 @@ A personal lyrics teleprompter for your phone. It finds lyrics (and timings) fro
 - Synced songs scroll exactly on time. For other songs, set the song length when editing, or use **⋯ → Tap to time** to create your own timings.
 - Chords: type them in square brackets before a word, `[G]First line of my [D]song`, or paste a chord sheet with chords on the line above the words.
 - Plain HTML, CSS and JavaScript with no build step, hosted free on GitHub Pages.
+
+## Product docs
+What Lyrica is, who it's for, the feature map, design system, architecture and decision log live in [docs/](docs/README.md).
