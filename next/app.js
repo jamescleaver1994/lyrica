@@ -342,9 +342,24 @@ function deckFill() {
   if (want > 0) deck.ids.push(...deckCandidates().slice(0, want).map((s) => s.id));
   saveDeck();
 }
+/* After a song, the next one up is the first in the deck that needs the least change to the guitar:
+ * same tuning first, then same capo. Ties keep the deck's own order. */
+function deckPickAfter(song, ids) {
+  let best = null, score = -1;
+  for (const id of ids) {
+    const s = getSong(id);
+    if (!s || (song && s.id === song.id)) continue;
+    const m = song ? setupMatch(s, song) : 0;
+    if (m > score) { best = s; score = m; }
+  }
+  return best;
+}
 function deckDone(id) {
   const d = deckState();
   d.ids = d.ids.filter((x) => x !== id);
+  // move the same-setup song to the top, so the list matches what the end card offers
+  const pick = deckPickAfter(getSong(id), d.ids);
+  if (pick) d.ids = [pick.id, ...d.ids.filter((x) => x !== pick.id)];
   if (!d.done.includes(id)) d.done.push(id);
   saveDeck();
 }
@@ -2428,7 +2443,7 @@ const player = {
     if (this.song && this.tl && this.maxT >= this.tl.end * 0.8) { markPracticed(this.song); this.maxT = 0; }
   },
   nextSong() {
-    if (this.fromDeck) { const d = deckState(); return getSong(d.ids.find((id) => id !== (this.song && this.song.id))) || null; }
+    if (this.fromDeck) return deckPickAfter(this.song, deckState().ids);
     const f = this.folderId && getFolder(this.folderId);
     if (!f || !this.song) return null;
     const i = f.songIds.indexOf(this.song.id);
@@ -2742,7 +2757,8 @@ const player = {
     };
     if (next) {
       const meta = this.fromDeck ? [next.artist, deckReason(next)] : [next.artist, (ids.indexOf(next.id) + 1) + ' of ' + ids.length];
-      const t = tile('Up next', next, meta.filter(Boolean).join(' · '), 'next', () => this.goNext(true));
+      const same = this.fromDeck && setupLabel(song) && setupMatch(next, song) === 3 ? 'Up next, same setup' : 'Up next';
+      const t = tile(same, next, meta.filter(Boolean).join(' · '), 'next', () => this.goNext(true));
       card.appendChild(t);
       // starts by itself after 10 seconds; the bar fills while you wait
       const row = el('div', 'end-auto');
